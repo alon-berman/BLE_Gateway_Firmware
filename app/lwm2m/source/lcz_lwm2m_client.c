@@ -37,6 +37,12 @@ LOG_MODULE_REGISTER(lwm2m_client, CONFIG_LCZ_LWM2M_LOG_LEVEL);
 #include "lcz_lwm2m_client.h"
 #include "lcz_lwm2m_fw_update.h"
 #include "lcz_lwm2m_conn_mon.h"
+#ifdef CONFIG_LWM2M_UCIFI_BATTERY
+#include "lcz_lwm2m_battery.h"
+#endif
+#include "FrameworkIncludes.h"
+#include "lcz_memfault.h"
+#include "memfault_task.h"
 
 /******************************************************************************/
 /* Local Constant, Macro and Type Definitions                                 */
@@ -70,22 +76,29 @@ enum create_state { CREATE_ALLOW = 0, CREATE_OK = 1, CREATE_FAIL = 2 };
 	"/" STRINGIFY(LWM2M_INSTANCE_ESS_SENSOR) "/" STRINGIFY(                \
 		SENSOR_VALUE_RID)
 
+#define CONNECTION_WATCHDOG_REBOOT_DELAY_MS 1000
+#define CONNECTION_WATCHDOG_TIMEOUT_MULTIPLIER 2
+#define CONNECTION_WATCHDOG_MAX_FALLBACK 300
+#define CONNECTION_WATCHDOG_REBOOT_TIMER_TIMEOUT_MINUTES 60
+
 /******************************************************************************/
 /* Local Data Definitions                                                     */
 /******************************************************************************/
 static struct {
-	uint8_t led_state;
 	uint32_t time;
 	struct lwm2m_ctx client;
-	bool dns_resolved;
 	bool connection_started;
 	bool connected;
 	bool setup_complete;
 	struct {
 		enum create_state ess_sensor;
 		enum create_state board_temperature;
+		enum create_state board_battery;
 	} cs;
 } lw;
+
+struct k_timer connection_watchdog_timer;
+struct k_timer connection_watchdog_reboot_timer;
 
 /******************************************************************************/
 /* Local Function Prototypes                                                  */
@@ -97,13 +110,13 @@ static int device_factory_default_cb(uint16_t obj_inst_id, uint8_t *args,
 static int lwm2m_setup(const char *id);
 static void rd_client_event(struct lwm2m_ctx *client,
 			    enum lwm2m_rd_client_event client_event);
-static int led_on_off_cb(uint16_t obj_inst_id, uint16_t res_id,
-			 uint16_t res_inst_id, uint8_t *data, uint16_t data_len,
-			 bool last_block, size_t total_size);
 static int create_ess_sensor_objects(void);
 static size_t lwm2m_str_size(const char *s);
 static int ess_sensor_set_error_handler(int status, char *obj_inst_str);
 static bool enable_bootstrap(void);
+static void set_connected(bool connected);
+static void connection_watchdog_timer_callback(struct k_timer *timer_id);
+static void pet_connection_watchdog(bool in_connection);
 
 /******************************************************************************/
 /* Global Function Definitions                                                */
@@ -116,7 +129,7 @@ void client_acknowledge(void)
 int lwm2m_client_init(void)
 {
 	if (!lw.setup_complete) {
-		return lwm2m_setup(attr_get_quasi_static(ATTR_ID_gatewayId));
+		return lwm2m_setup(attr_get_quasi_static(ATTR_ID_gateway_id));
 	} else {
 		return 0;
 	}
@@ -133,6 +146,8 @@ int lwm2m_create_sensor_obj(struct lwm2m_sensor_obj_cfg *cfg)
 		if (r < 0) {
 			return r;
 		}
+
+		LWM2M_CLIENT_REREGISTER;
 
 		if (!cfg->skip_secondary) {
 			snprintk(path, sizeof(path), "%u/%u/5701", cfg->type,
@@ -256,17 +271,62 @@ int lwm2m_set_board_temperature(double *temperature)
 }
 #endif
 
+#if defined(CONFIG_BOARD_MG100) && defined(CONFIG_LWM2M_UCIFI_BATTERY)
+int lwm2m_set_board_battery(double *voltage, uint8_t level)
+{
+	int result = 0;
+	struct lwm2m_battery_obj_cfg cfg = {
+		.instance = LWM2M_INSTANCE_BOARD,
+		.level = 0,
+		.voltage = 0,
+	};
+
+	if (lw.cs.board_battery == CREATE_ALLOW) {
+		result = lcz_lwm2m_battery_create(&cfg);
+		if (result == 0) {
+			lw.cs.board_battery = CREATE_OK;
+		} else if (result != -EAGAIN) {
+			lw.cs.board_temperature = CREATE_FAIL;
+		}
+	}
+
+	if (lw.cs.board_battery != CREATE_OK) {
+		return -EPERM;
+	}
+
+	if (result == 0) {
+		result = lcz_lwm2m_battery_level_set(LWM2M_INSTANCE_BOARD,
+						     level);
+
+		if (result == -ENOENT) {
+			/* The object can be deleted from the cloud */
+			lw.cs.board_battery = CREATE_ALLOW;
+		}
+
+		result = lcz_lwm2m_battery_voltage_set(LWM2M_INSTANCE_BOARD,
+						       voltage);
+
+		if (result == -ENOENT) {
+			/* The object can be deleted from the cloud */
+			lw.cs.board_battery = CREATE_ALLOW;
+		}
+	}
+
+	return result;
+}
+#endif
+
 int lwm2m_generate_psk(void)
 {
 	int r = -EPERM;
 	uint8_t psk[ATTR_LWM2M_PSK_SIZE];
-	uint8_t cmd = attr_get_uint32(ATTR_ID_generatePsk,
+	uint8_t cmd = attr_get_uint32(ATTR_ID_generate_psk,
 				      GENERATE_PSK_LWM2M_DEFAULT);
 
 	switch (cmd) {
 	case GENERATE_PSK_LWM2M_DEFAULT:
 		LOG_DBG("Setting PSK to default");
-		r = attr_default(ATTR_ID_lwm2mPsk);
+		r = attr_default(ATTR_ID_lwm2m_psk);
 
 		break;
 
@@ -274,7 +334,7 @@ int lwm2m_generate_psk(void)
 		LOG_DBG("Generating a new LwM2M PSK");
 		r = sys_csrand_get(psk, ATTR_LWM2M_PSK_SIZE);
 		if (r == 0) {
-			r = attr_set_byte_array(ATTR_ID_lwm2mPsk, psk,
+			r = attr_set_byte_array(ATTR_ID_lwm2m_psk, psk,
 						sizeof(psk));
 		}
 		break;
@@ -310,7 +370,7 @@ int lwm2m_connect(void)
 
 		lwm2m_rd_client_start(
 			&lw.client,
-			attr_get_quasi_static(ATTR_ID_lwm2mClientId), flags,
+			attr_get_quasi_static(ATTR_ID_lwm2m_client_id), flags,
 			rd_client_event);
 		lw.connection_started = true;
 	}
@@ -322,7 +382,16 @@ int lwm2m_disconnect(void)
 {
 	lwm2m_rd_client_stop(&lw.client, rd_client_event, false);
 	lw.connection_started = false;
-	lw.connected = false;
+	set_connected(false);
+
+	return 0;
+}
+
+int lwm2m_disconnect_and_deregister(void)
+{
+	lwm2m_rd_client_stop(&lw.client, rd_client_event, true);
+	lw.connection_started = false;
+	set_connected(false);
 
 	return 0;
 }
@@ -403,6 +472,16 @@ int lwm2m_delete_resource_inst(uint16_t type, uint16_t instance,
 /******************************************************************************/
 /* Local Function Definitions                                                 */
 /******************************************************************************/
+static void set_connected(bool connected)
+{
+	lw.connected = connected;
+	if (lw.connected) {
+		lcz_led_turn_on(CLOUD_LED);
+	} else {
+		lcz_led_turn_off(CLOUD_LED);
+	}
+}
+
 static int device_reboot_cb(uint16_t obj_inst_id, uint8_t *args,
 			    uint16_t args_len)
 {
@@ -410,7 +489,9 @@ static int device_reboot_cb(uint16_t obj_inst_id, uint8_t *args,
 	ARG_UNUSED(args);
 	ARG_UNUSED(args_len);
 
-	lcz_software_reset(0);
+	FRAMEWORK_MSG_CREATE_AND_BROADCAST(FWK_ID_RESERVED,
+					   FMC_CLOUD_REBOOT);
+
 	return 0;
 }
 
@@ -455,7 +536,7 @@ static int lwm2m_setup(const char *id)
 
 	snprintk(server_url, server_url_len, "coap%s//%s",
 		 IS_ENABLED(CONFIG_LWM2M_DTLS_SUPPORT) ? "s:" : ":",
-		 (char *)attr_get_quasi_static(ATTR_ID_lwm2mPeerUrl));
+		 (char *)attr_get_quasi_static(ATTR_ID_lwm2m_peer_url));
 	LOG_INF("Server URL: %s", log_strdup(server_url));
 
 	/* Security Mode */
@@ -463,10 +544,10 @@ static int lwm2m_setup(const char *id)
 			    IS_ENABLED(CONFIG_LWM2M_DTLS_SUPPORT) ? 0 : 3);
 #if defined(CONFIG_LWM2M_DTLS_SUPPORT)
 	lwm2m_engine_set_string(
-		"0/0/3", (char *)attr_get_quasi_static(ATTR_ID_lwm2mClientId));
+		"0/0/3", (char *)attr_get_quasi_static(ATTR_ID_lwm2m_client_id));
 	lwm2m_engine_set_opaque("0/0/5",
-				attr_get_quasi_static(ATTR_ID_lwm2mPsk),
-				attr_get_size(ATTR_ID_lwm2mPsk));
+				(char *)attr_get_quasi_static(ATTR_ID_lwm2m_psk),
+				attr_get_size(ATTR_ID_lwm2m_psk));
 #endif /* CONFIG_LWM2M_DTLS_SUPPORT */
 
 	if (enable_bootstrap()) {
@@ -502,18 +583,6 @@ static int lwm2m_setup(const char *id)
 	lwm2m_engine_register_exec_callback("3/0/5", device_factory_default_cb);
 	lwm2m_engine_register_read_callback("3/0/13", current_time_read_cb);
 
-	/* IPSO: Light Control object */
-	lwm2m_engine_create_obj_inst("3311/0");
-	/* State of LED is not saved/restored */
-	lwm2m_engine_register_post_write_callback("3311/0/5850", led_on_off_cb);
-	/* Delete unused optional resources */
-	lwm2m_engine_delete_res_inst("3311/0/5851/0");
-	lwm2m_engine_delete_res_inst("3311/0/5805/0");
-	lwm2m_engine_delete_res_inst("3311/0/5820/0");
-	lwm2m_engine_delete_res_inst("3311/0/5706/0");
-	lwm2m_engine_delete_res_inst("3311/0/5701/0");
-	lwm2m_engine_delete_res_inst("3311/0/5750/0");
-
 #ifdef CONFIG_LCZ_LWM2M_SENSOR
 	lcz_lwm2m_sensor_init();
 #endif
@@ -525,6 +594,19 @@ static int lwm2m_setup(const char *id)
 #if defined(CONFIG_LWM2M_CONN_MON_OBJ_SUPPORT)
 	lcz_lwm2m_conn_mon_update_values();
 #endif
+
+	k_timer_init(&connection_watchdog_timer,
+		     connection_watchdog_timer_callback, NULL);
+	k_timer_init(&connection_watchdog_reboot_timer,
+		     connection_watchdog_timer_callback, NULL);
+
+	/* Start the reboot watchdog to reboot the system if we never connect
+	 * to the server.
+	 */
+	k_timer_start(
+		&connection_watchdog_reboot_timer,
+		K_MINUTES(CONNECTION_WATCHDOG_REBOOT_TIMER_TIMEOUT_MINUTES),
+		K_NO_WAIT);
 
 	lw.setup_complete = true;
 	return 0;
@@ -540,39 +622,38 @@ static void rd_client_event(struct lwm2m_ctx *client,
 
 	case LWM2M_RD_CLIENT_EVENT_BOOTSTRAP_REG_FAILURE:
 		LOG_DBG("Bootstrap registration failure!");
-		lw.connected = false;
+		set_connected(false);
 		lwm2m_disconnect();
 		break;
 
 	case LWM2M_RD_CLIENT_EVENT_BOOTSTRAP_REG_COMPLETE:
 		LOG_DBG("Bootstrap registration complete");
-		lw.connected = true;
 		break;
 
 	case LWM2M_RD_CLIENT_EVENT_BOOTSTRAP_TRANSFER_COMPLETE:
 		LOG_DBG("Bootstrap transfer complete");
-		lw.connected = true;
 		break;
 
 	case LWM2M_RD_CLIENT_EVENT_REGISTRATION_FAILURE:
 		LOG_DBG("Registration failure!");
-		lw.connected = false;
+		set_connected(false);
 		lwm2m_disconnect();
 		break;
 
 	case LWM2M_RD_CLIENT_EVENT_REGISTRATION_COMPLETE:
 		LOG_DBG("Registration complete");
-		lw.connected = true;
+		set_connected(true);
+		pet_connection_watchdog(true);
 		break;
 
 	case LWM2M_RD_CLIENT_EVENT_REG_UPDATE_FAILURE:
 		LOG_DBG("Registration update failure!");
-		lw.connected = false;
+		set_connected(false);
 		break;
 
 	case LWM2M_RD_CLIENT_EVENT_REG_UPDATE_COMPLETE:
 		LOG_DBG("Registration update complete");
-		lw.connected = true;
+		pet_connection_watchdog(true);
 		break;
 
 	case LWM2M_RD_CLIENT_EVENT_DEREGISTER_FAILURE:
@@ -582,7 +663,8 @@ static void rd_client_event(struct lwm2m_ctx *client,
 
 	case LWM2M_RD_CLIENT_EVENT_DISCONNECT:
 		LOG_DBG("Disconnected");
-		lw.connected = false;
+		set_connected(false);
+		pet_connection_watchdog(false);
 		break;
 
 	case LWM2M_RD_CLIENT_EVENT_QUEUE_MODE_RX_OFF:
@@ -591,28 +673,9 @@ static void rd_client_event(struct lwm2m_ctx *client,
 
 	case LWM2M_RD_CLIENT_EVENT_NETWORK_ERROR:
 		LOG_DBG("Network Error");
-		lw.connected = false;
+		set_connected(false);
 		break;
 	}
-}
-
-static int led_on_off_cb(uint16_t obj_inst_id, uint16_t res_id,
-			 uint16_t res_inst_id, uint8_t *data, uint16_t data_len,
-			 bool last_block, size_t total_size)
-{
-	uint8_t led_val = *(uint8_t *)data;
-	if (led_val != lw.led_state) {
-		if (led_val) {
-			lcz_led_turn_on(CLOUD_LED);
-		} else {
-			lcz_led_turn_off(CLOUD_LED);
-		}
-		lw.led_state = led_val;
-		/* reset time on counter */
-		lwm2m_engine_set_s32("3311/0/5852", 0);
-	}
-
-	return 0;
 }
 
 static int create_ess_sensor_objects(void)
@@ -701,9 +764,51 @@ static int ess_sensor_set_error_handler(int status, char *obj_inst_str)
 static bool enable_bootstrap(void)
 {
 	if (IS_ENABLED(CONFIG_LWM2M_RD_CLIENT_SUPPORT_BOOTSTRAP) &&
-	    attr_get_uint32(ATTR_ID_lwm2mEnableBootstrap, false)) {
+	    attr_get_uint32(ATTR_ID_lwm2m_enable_bootstrap, false)) {
 		return true;
 	} else {
 		return false;
 	}
+}
+
+static void connection_watchdog_timer_callback(struct k_timer *timer_id)
+{
+	if (timer_id == &connection_watchdog_timer) {
+		LOG_WRN("Connection watchdog expired!");
+		MFLT_METRICS_ADD(lwm2m_watchdog, 1);
+		lwm2m_disconnect();
+	} else if (timer_id == &connection_watchdog_reboot_timer) {
+		LOG_WRN("Connection reboot watchdog expired!");
+		lcz_software_reset_after_assert(
+			CONNECTION_WATCHDOG_REBOOT_DELAY_MS);
+	}
+}
+
+static void pet_connection_watchdog(bool in_connection)
+{
+	int ret;
+	uint32_t timeout;
+
+	if (in_connection) {
+		ret = lwm2m_engine_get_u32("1/0/1", &timeout);
+		if (ret < 0) {
+			LOG_ERR("Could not read lifetime");
+		}
+		/* Wait for multiple registration updates */
+		timeout *= CONNECTION_WATCHDOG_TIMEOUT_MULTIPLIER;
+
+		/* pet the reboot watchdog to prevent a system reboot */
+		k_timer_start(
+			&connection_watchdog_reboot_timer,
+			K_MINUTES(
+				CONNECTION_WATCHDOG_REBOOT_TIMER_TIMEOUT_MINUTES),
+			K_NO_WAIT);
+	} else {
+		timeout = attr_get_uint32(ATTR_ID_join_max,
+					  CONNECTION_WATCHDOG_MAX_FALLBACK);
+		timeout *= CONNECTION_WATCHDOG_TIMEOUT_MULTIPLIER;
+	}
+	LOG_DBG("Connection watchdog set to %d seconds", timeout);
+	k_timer_start(&connection_watchdog_timer, K_SECONDS(timeout),
+		      K_NO_WAIT);
 }

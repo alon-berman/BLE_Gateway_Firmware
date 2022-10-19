@@ -25,7 +25,7 @@ config WDT_LOG_LEVEL
 config WDT_TIMEOUT_MILLISECONDS
     int "Rate in milliseconds for watchdog"
     range 18000 1200000
-    default 600000
+    default 300000
     help
         The bootloader (mcuboot) supplied with the application prior to
         4.0.0 doesn't feed the watchdog. If the bootloader hasn't been

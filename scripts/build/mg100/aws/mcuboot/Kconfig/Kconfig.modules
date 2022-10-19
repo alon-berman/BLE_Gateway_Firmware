@@ -1,0 +1,84 @@
+menu "attributes (/home/bermanalon/git/pinnacle-100/modules/lib/laird_connect/attributes)"
+osource "/home/bermanalon/git/pinnacle-100/modules/lib/laird_connect/attributes/Kconfig.attribute"
+config ZEPHYR_ATTRIBUTES_MODULE
+	bool
+	default y
+endmenu
+menu "framework (/home/bermanalon/git/pinnacle-100/modules/lib/laird_connect/framework)"
+osource "/home/bermanalon/git/pinnacle-100/modules/lib/laird_connect/framework/Kconfig"
+config ZEPHYR_FRAMEWORK_MODULE
+	bool
+	default y
+endmenu
+menu "memfault-firmware-sdk (/home/bermanalon/git/pinnacle-100/modules/lib/memfault-firmware-sdk)"
+osource "/home/bermanalon/git/pinnacle-100/modules/lib/memfault-firmware-sdk/ports/zephyr/Kconfig"
+config ZEPHYR_MEMFAULT_FIRMWARE_SDK_MODULE
+	bool
+	default y
+endmenu
+menu "nrf (/home/bermanalon/git/pinnacle-100/nrf)"
+osource "/home/bermanalon/git/pinnacle-100/nrf/Kconfig.nrf"
+config ZEPHYR_NRF_MODULE
+	bool
+	default y
+endmenu
+menu "zephyr_lib (/home/bermanalon/git/pinnacle-100/modules/lib/laird_connect/zephyr_lib)"
+osource "/home/bermanalon/git/pinnacle-100/modules/lib/laird_connect/zephyr_lib/Kconfig"
+config ZEPHYR_ZEPHYR_LIB_MODULE
+	bool
+	default y
+endmenu
+menu "mcuboot (/home/bermanalon/git/pinnacle-100/bootloader/mcuboot)"
+osource "$(ZEPHYR_MCUBOOT_KCONFIG)"
+config ZEPHYR_MCUBOOT_MODULE
+	bool
+	default y
+endmenu
+menu "trusted-firmware-m (/home/bermanalon/git/pinnacle-100/modules/tee/tfm)"
+osource "$(ZEPHYR_TRUSTED_FIRMWARE_M_KCONFIG)"
+config ZEPHYR_TRUSTED_FIRMWARE_M_MODULE
+	bool
+	default y
+endmenu
+menu "cjson (/home/bermanalon/git/pinnacle-100/modules/lib/cjson)"
+osource "$(ZEPHYR_CJSON_KCONFIG)"
+config ZEPHYR_CJSON_MODULE
+	bool
+	default y
+endmenu
+menu "pelion-dm (/home/bermanalon/git/pinnacle-100/modules/lib/pelion-dm)"
+osource "/home/bermanalon/git/pinnacle-100/modules/lib/pelion-dm/zephyr/Kconfig"
+config ZEPHYR_PELION_DM_MODULE
+	bool
+	default y
+endmenu
+menu "cddl-gen (/home/bermanalon/git/pinnacle-100/modules/lib/cddl-gen)"
+osource "$(ZEPHYR_CDDL_GEN_KCONFIG)"
+config ZEPHYR_CDDL_GEN_MODULE
+	bool
+	default y
+endmenu
+menu "hal_nordic (/home/bermanalon/git/pinnacle-100/modules/hal/nordic)"
+osource "$(ZEPHYR_HAL_NORDIC_KCONFIG)"
+config ZEPHYR_HAL_NORDIC_MODULE
+	bool
+	default y
+endmenu
+menu "mbedtls (/home/bermanalon/git/pinnacle-100/modules/crypto/mbedtls)"
+osource "$(ZEPHYR_MBEDTLS_KCONFIG)"
+config ZEPHYR_MBEDTLS_MODULE
+	bool
+	default y
+endmenu
+menu "nrfxlib (/home/bermanalon/git/pinnacle-100/nrfxlib)"
+osource "/home/bermanalon/git/pinnacle-100/nrfxlib/Kconfig.nrfxlib"
+config ZEPHYR_NRFXLIB_MODULE
+	bool
+	default y
+endmenu
+menu "connectedhomeip (/home/bermanalon/git/pinnacle-100/modules/lib/matter)"
+osource "/home/bermanalon/git/pinnacle-100/modules/lib/matter/config/nrfconnect/chip-module/Kconfig"
+config ZEPHYR_CONNECTEDHOMEIP_MODULE
+	bool
+	default y
+endmenu

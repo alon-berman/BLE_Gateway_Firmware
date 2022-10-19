@@ -25,6 +25,10 @@ LOG_MODULE_REGISTER(lc_battery, CONFIG_LAIRD_CONNECT_BATTERY_LOG_LEVEL);
 #include "sdcard_log.h"
 #endif
 
+#ifdef CONFIG_LWM2M
+#include "lcz_lwm2m_client.h"
+#endif
+
 /******************************************************************************/
 /* Local Constant, Macro and Type Definitions                                 */
 /******************************************************************************/
@@ -131,12 +135,12 @@ int UpdateBatteryThreshold4(int Value)
 
 int UpdateBatteryLowThreshold(int Value)
 {
-	return attr_set_uint32(ATTR_ID_batteryLowThreshold, Value);
+	return attr_set_uint32(ATTR_ID_battery_low_threshold, Value);
 }
 
 int UpdateBatteryBadThreshold(int Value)
 {
-	return attr_set_uint32(ATTR_ID_batteryAlarmThreshold, Value);
+	return attr_set_uint32(ATTR_ID_battery_alarm_threshold, Value);
 }
 
 int GetBatteryThreshold0(void)
@@ -166,12 +170,12 @@ int GetBatteryThreshold4(void)
 
 int GetBatteryLowThreshold(void)
 {
-	return attr_get_uint32(ATTR_ID_batteryLowThreshold, BATTERY_THRESH_LOW);
+	return attr_get_uint32(ATTR_ID_battery_low_threshold, BATTERY_THRESH_LOW);
 }
 
 int GetBatteryBadThreshold(void)
 {
-	return attr_get_uint32(ATTR_ID_batteryAlarmThreshold,
+	return attr_get_uint32(ATTR_ID_battery_alarm_threshold,
 			       BATTERY_THRESH_ALARM);
 }
 
@@ -214,7 +218,7 @@ uint8_t BatteryGetChgState(void)
 		pwrState |= BATTERY_NOT_CHARGING_STATE;
 	}
 
-	attr_set_uint32(ATTR_ID_batteryChargingState, pwrState);
+	attr_set_uint32(ATTR_ID_battery_charging_state, pwrState);
 
 	return (pwrState);
 }
@@ -265,11 +269,15 @@ enum battery_status BatteryCalculateRemainingCapacity(uint16_t Volts)
 {
 	int32_t temperature = 0;
 	int16_t voltage = 0;
+#ifdef CONFIG_LWM2M_UCIFI_BATTERY
+	double V;
+	int level;
+#endif
 
 	/* If the temperature can't be read, then just use the
 	 * BASE_TEMP value as a safe default.
 	 */
-	temperature = attr_get_signed32(ATTR_ID_batteryTemperature, BASE_TEMP);
+	temperature = attr_get_signed32(ATTR_ID_battery_temperature, BASE_TEMP);
 
 #ifdef CONFIG_LAIRD_CONNECT_BATTERY_LOGGING
 	BatteryLogData(Volts, temperature);
@@ -299,10 +307,32 @@ enum battery_status BatteryCalculateRemainingCapacity(uint16_t Volts)
 	batteryStatus.batteryCapacity = batteryCapacity;
 	batteryStatus.ambientTemperature = temperature;
 
+#ifdef CONFIG_LWM2M_UCIFI_BATTERY
+	V = voltage / 1000.0;
+	switch (batteryCapacity) {
+	case BATTERY_STATUS_0:
+		level = BATTERY_LEVEL_0;
+		break;
+	case BATTERY_STATUS_1:
+		level = BATTERY_LEVEL_25;
+		break;
+	case BATTERY_STATUS_2:
+		level = BATTERY_LEVEL_50;
+		break;
+	case BATTERY_STATUS_3:
+		level = BATTERY_LEVEL_75;
+		break;
+	case BATTERY_STATUS_4:
+		level = BATTERY_LEVEL_100;
+		break;
+	}
+	lwm2m_set_board_battery(&V, level);
+#endif
+
 	/* reported to BLE/shell */
-	attr_set_uint32(ATTR_ID_batteryAlarm, batteryAlarmState);
-	attr_set_uint32(ATTR_ID_batteryVoltageMv, voltage);
-	attr_set_uint32(ATTR_ID_batteryCapacity, batteryCapacity);
+	attr_set_uint32(ATTR_ID_battery_alarm, batteryAlarmState);
+	attr_set_uint32(ATTR_ID_battery_voltage_mv, voltage);
+	attr_set_uint32(ATTR_ID_battery_capacity, batteryCapacity);
 
 	return (batteryCapacity);
 }

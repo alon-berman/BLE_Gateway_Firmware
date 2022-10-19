@@ -1,0 +1,3 @@
+"BOARD_ROOT":"/home/bermanalon/git/pinnacle-100/nrf"
+"DTS_ROOT":"/home/bermanalon/git/pinnacle-100/nrf"
+"MODULE_EXT_ROOT":"/home/bermanalon/git/pinnacle-100/nrf"

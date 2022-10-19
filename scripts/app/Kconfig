@@ -1,0 +1,318 @@
+# Copyright (c) 2021 Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig USER_APPLICATION
+     bool "Config User Application"
+	 default y
+
+if USER_APPLICATION
+
+config LAIRD_CONNECTIVITY_DEBUG
+    bool
+    default n
+
+config SENSOR_MAX_AD_SIZE
+    int "The maximum size for ads sent to sensor task"
+    default 67
+    help
+        67 - BT510 coded PHY advertisement
+        31 - BT510 1M PHY advertisement and scan response
+
+config SENSOR_TASK
+    bool
+    default n
+
+config SCAN_FOR_BT510
+    bool "Parse Bluetooth advertisements for BT510 Sensor"
+    select SENSOR_TASK
+    select BLE_VSP_DEFINITIONS
+
+config SCAN_FOR_BT510_CODED
+    bool "Scan for coded PHY and 1M advertisements from BT510"
+    default y if SCAN_FOR_BT510
+    depends on BT_EXT_ADV
+
+config CLOUD_QUEUE_SIZE
+    int "The size of queue for sending messages to AWS or LWM2M client"
+    default 32
+
+config CLOUD_PURGE_THRESHOLD
+    int "The threshold at which the cloud queue is purged."
+    default 24
+
+config CLOUD_FIFO_CHECK_RATE_SECONDS
+    int "The rate at which the cloud fifo is checked"
+    default 1
+
+config AWS_TOPIC_MAX_SIZE
+    int "Maximum size for AWS topic strings"
+    default 64
+
+config MQTT_RX_BUFFER_SIZE
+    int "Size of buffer for MQTT rx path"
+    default 1024
+
+config MQTT_TX_BUFFER_SIZE
+    int "Size of buffer for MQTT tx path"
+    default 1536
+
+menuconfig BLUEGRASS
+    bool "Laird Connectivity Bluegrass cloud"
+    depends on MQTT_LIB
+    help
+        Send sensor data to Bluegrass cloud platform
+
+if BLUEGRASS
+
+config AWS_DATA_SEND_LED_OFF_DURATION_MILLISECONDS
+    int "The amount of time to turn off the green LED when data is sent"
+    default 30
+    range 1 1000
+    help
+        Green LED is turned on when connected to AWS.
+        Green LED is flashed off when data is sent.
+        Implemented using sleep.
+        Subscription processing doesn't blink green LED.
+
+config AWS_HEARTBEAT_SECONDS
+    int "Rate at which to send LTE info and battery status"
+    default 120
+
+config AWS_PUBLISH_WATCHDOG_SECONDS
+    int "Watchdog timeout for successful AWS publish"
+    default 0 if AWS_HEARTBEAT_SECONDS = 0
+    default 3600
+    help
+        Disabled when 0
+        Not enabled until first successful publish
+        Timeout causes a reset
+
+config AWS_MAX_CONSECUTIVE_CONNECTION_FAILURES
+    int "Maximum consecutive connection failures before reset"
+    default 0
+    help
+        Disabled when 0
+
+config USE_SINGLE_AWS_TOPIC
+    bool "Send all sensor data to gateway topic"
+    help
+        PSM mode doesn't easily support receiving information from the
+        Laird Connectivity Cloud demo.
+        When using a single topic [BT510] temperature data is sent to
+        the gateway's topic vs. the individual sensor topic.
+        BL654 (ESS) sensor data is always sent to the gateway topic.
+
+config AWS_CLEAR_SHADOW_ON_STARTUP
+    bool "Null shadow state on first connection"
+
+config JSON_BRACKET_BUFFER_SIZE
+    int "The maximum size JSON message that can be processed"
+    default 1536
+    help
+        This applies to sensor messages received over Bluetooth.
+
+config SENSOR_TOPIC_FMT_STR_PREFIX
+	string "Default location for sensor data"
+	default "$aws/things/%s/shadow"
+    help
+        "%s will be replaced by the sensor BT address"
+
+config SHADOW_IN_MAX_SIZE
+    int "Maximum size of subscription/shadow that can be processed"
+    default 8192
+    help
+        The timestamps can make the shadow larger than 7K bytes.
+
+config SENSOR_TABLE_SIZE
+    int "Number of sensors viewable on Bluegrass gateway page"
+    default 5
+    range 0 5
+
+config SENSOR_GREENLIST_SIZE
+    int "Number of sensors enabled for config and data collection"
+    default 3
+    range 0 3
+
+config SENSOR_LOG_MAX_SIZE
+    int "The maximum number of stored sensor events"
+    default 30
+    range 1 30
+    help
+        Limited by the memory pool (heap) and buffer pool (framework).
+        Limited by MQTT or modem.
+
+config SENSOR_SUBSCRIPTION_DELAY_SECONDS
+    int "Delay after greenlist before subscription to delta/get topics."
+    default 10
+    range 6 60
+    help
+        The server needs time to generate the sensor object.
+        When the permissions are changed on AWS a disconnect will occur.
+
+config SENSOR_CONFIG_DELAY_SECONDS
+    int "Delay before sensor is configured/dumped after greenlist ack"
+    default 10
+    range 6 60
+    help
+        Prevent reading of sensor settings during AWS disconnect that
+        occurs when a sensor is enabled in Bluegrass
+        (for the first time).
+
+config VSP_TX_ECHO
+    bool "Print Virtual Serial Port data transmitted to sensors"
+    help
+        This occurs in task context because strings can be long
+
+config VSP_RX_ECHO
+    bool "Print Virtual Serial Port data received from sensors"
+    help
+        This occurs in task context because strings can be long
+
+config BLUEGRASS_LOG_LEVEL
+    int "Bluegrass Log level"
+    range 0 4
+    default 3
+
+endif # BLUEGRASS
+
+config JSON_LOG_PUBLISH
+    bool "Print data published to AWS"
+
+config JSON_LOG_TOPIC
+    bool "Print the topic that docs are published to or received from"
+
+config JSON_LOG_MQTT_RX_DATA
+    bool "Enable/Disable printing of received MQTT data."
+
+config APP_CA_CERT_TAG
+    int "mbedTLS tag for CA"
+    default 1
+
+config APP_DEVICE_CERT_TAG
+    int "mbedTLS tag for device cert and private key"
+    default 2
+
+config JSMN_NUMBER_OF_TOKENS
+    int "The number of tokens for jsmn"
+    default 512
+    help
+        JSMN is used to process shadow and CoAP messages.
+        The maximum size of the shadow (and tokens required) is affected
+        by the number of sensors and the sensor log size.
+        The timestamps that are generated by AWS make the shadow large.
+
+config JSMN_LOG_LEVEL
+    int "Log level for JSMN JSON module"
+    range 0 4
+    default 3
+
+#
+# The following 4 values are used to save NV information into
+# the filesystem to allow deprecation of the NV system.
+#
+config APP_COMMISSIONED_FILE_NAME
+    string
+    default "commissioned.bin"
+
+config APP_CLIENT_ID_FILE_NAME
+    string
+    default "client_id.txt"
+
+config APP_ENDPOINT_FILE_NAME
+    string
+    default "endpoint.txt"
+
+config APP_TOPIC_PREFIX_FILE_NAME
+    string
+    default "topic_prefix.txt"
+
+config AWS_LOG_LEVEL
+    int "AWS Log level"
+    range 0 4
+    default 3
+
+config LTE_LOG_LEVEL
+    int "LTE Log level"
+    range 0 4
+    default 3
+
+config SENSOR_TASK_LOG_LEVEL
+    int "Sensor Task Log level"
+    range 0 4
+    default 3
+
+config SENSOR_TABLE_LOG_LEVEL
+    int "Sensor Table Log level"
+    range 0 4
+    default 3
+
+config SD_CARD_LOG_LEVEL
+    int "SD Card Log level"
+    range 0 4
+    default 3
+
+config SENSOR_GATEWAY_PARSER_LOG_LEVEL
+    int "Sensor gateway parser log level"
+    range 0 4
+    default 3
+
+config CERT_LOADER_LOG_LEVEL
+    int "Certificate loader log level"
+    range 0 4
+    default 3
+
+config SD_CARD_LOG
+    bool "Enable logging to SD card"
+    depends on (BOARD_MG100 || BOARD_BL5340_DVK_CPUAPP || BOARD_BL5340PA_DVK_CPUAPP)
+    default y
+
+config CONTROL_TASK_LOG_LEVEL
+    int "Log level for control (main) task"
+    range 0 4
+    default 4
+
+config LOG_LEVEL_FOTA_SMP
+    int "Log level for FOTA using SMP File transfer and a control point"
+    range 0 4
+    default 4
+
+config LOG_LEVEL_PSK_GENERATOR
+    int "Log level for PSK generator"
+    range 0 4
+    default 4
+
+config MIN_POWER_MEASUREMENT_MV
+    int "The MG100 only measures battery voltage. It may not be present."
+    default 2500
+
+config GATEWAY_LOG_LEVEL
+    int "Log level for gateway module"
+    range 0 4
+    default 4
+
+config GATEWAY_FSM_LOG_LEVEL
+    int "Log level for gateway state machine module"
+    range 0 4
+    default 4
+
+config FOTA_SMP_DELETE_ON_COMPLETE
+    bool "Delete file on completion of FOTA"
+    default y
+
+rsource "./common/Kconfig.ble"
+rsource "./common/Kconfig.single_peripheral"
+rsource "./common/Kconfig.lairdconnect_battery"
+rsource "./common/Kconfig.button"
+rsource "./common/Kconfig.wdt"
+rsource "./common/Kconfig.sntp"
+rsource "./common/Kconfig.lcz_motion"
+rsource "./common/Kconfig.lcz_motion_temperature"
+rsource "./coap/Kconfig"
+rsource "./contact_tracing/Kconfig"
+rsource "./http_fota/Kconfig"
+rsource "./ess_sensor/Kconfig"
+rsource "./lwm2m/Kconfig"
+
+endif # USER_APPLICATION
+
+source "Kconfig.zephyr"

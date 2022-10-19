@@ -1,0 +1,16 @@
+{
+    "format-version": 0,
+    "time": 1666015710,
+    "files": [
+        {
+            "load_address": 98816,
+            "version_MCUBOOT": "6.4.1+1666015689",
+            "type": "application",
+            "board": "MG100",
+            "soc": "nRF52840_QIAA",
+            "size": 754056,
+            "file": "app_update.bin",
+            "modtime": 1666015709
+        }
+    ]
+}

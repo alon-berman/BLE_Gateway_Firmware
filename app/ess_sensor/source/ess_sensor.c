@@ -21,6 +21,7 @@ LOG_MODULE_REGISTER(ess_sensor, CONFIG_ESS_SENSOR_LOG_LEVEL);
 #include <bluetooth/bluetooth.h>
 #include <sys/byteorder.h>
 
+#include "wdt.h"
 #include "FrameworkIncludes.h"
 #include "laird_utility_macros.h"
 #include "lcz_bluetooth.h"
@@ -609,7 +610,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 
 	LOG_INF("Connected sensor: %s", log_strdup(addr));
-	attr_set_string(ATTR_ID_sensorBluetoothAddress, addr, strlen(addr));
+	attr_set_string(ATTR_ID_sensor_bluetooth_address, addr, strlen(addr));
 
 	/* Wait some time before discovering services.
 	 * After a connection the BL654 Sensor disables
@@ -654,7 +655,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 static void set_ble_state(enum central_state state)
 {
 	remote.app_state = state;
-	attr_set_uint32(ATTR_ID_centralState, state);
+	attr_set_uint32(ATTR_ID_central_state, state);
 
 	switch (state) {
 	case CENTRAL_STATE_CONNECTED_AND_CONFIGURED:
@@ -668,7 +669,7 @@ static void set_ble_state(enum central_state state)
 #ifdef HAS_SECOND_BLUETOOTH_LED
 		lcz_led_blink(BLUETOOTH_LED, &LED_SENSOR_SEARCH_PATTERN);
 #endif
-		attr_set_string(ATTR_ID_sensorBluetoothAddress, "", 0);
+		attr_set_string(ATTR_ID_sensor_bluetooth_address, "", 0);
 		lcz_bt_scan_restart(scan_id);
 		break;
 
@@ -709,6 +710,8 @@ static void sensor_aggregator(uint8_t sensor, int32_t reading)
 		ESSSensorMsg_t *pMsg =
 			BP_TRY_TO_TAKE(sizeof(ESSSensorMsg_t));
 		if (pMsg == NULL) {
+			LOG_ERR("Bad memory allocation. Resetting...");
+			wdt_force();			
 			return;
 		}
 		pMsg->header.msgCode = FMC_ESS_SENSOR_EVENT;

@@ -19,6 +19,7 @@ LOG_MODULE_REGISTER(sensor_table, CONFIG_SENSOR_TABLE_LOG_LEVEL);
 #include <zephyr.h>
 #include <bluetooth/bluetooth.h>
 
+#include "wdt.h"
 #include "lcz_bluetooth.h"
 #include "lcz_qrtc.h"
 #include "ad_find.h"
@@ -612,6 +613,8 @@ void SensorTable_CreateShadowFromDumpResponse(FwkBufMsg_t *pRsp,
 	size_t size = JSON_DEFAULT_BUF_SIZE + pRsp->length + 1;
 	JsonMsg_t *pMsg = BP_TRY_TO_TAKE(FWK_BUFFER_MSG_SIZE(JsonMsg_t, size));
 	if (pMsg == NULL) {
+		LOG_ERR("Bad memory allocation. Resetting...");
+		wdt_force();		
 		return;
 	}
 	pMsg->header.msgCode = FMC_SENSOR_PUBLISH;
@@ -883,6 +886,8 @@ static void ShadowMaker(SensorEntry_t *pEntry)
 	JsonMsg_t *pMsg =
 		BP_TRY_TO_TAKE(FWK_BUFFER_MSG_SIZE(JsonMsg_t, SHADOW_BUF_SIZE));
 	if (pMsg == NULL) {
+		LOG_ERR("Bad memory allocation. Resetting...");
+		wdt_force();		
 		return;
 	}
 
@@ -1181,7 +1186,7 @@ static void ShadowLogHandler(JsonMsg_t *pMsg, SensorEntry_t *pEntry)
 static void ShadowSpecialHandler(JsonMsg_t *pMsg, SensorEntry_t *pEntry)
 {
 	ShadowBuilder_AddPair(pMsg, "gatewayId",
-			      (char *)attr_get_quasi_static(ATTR_ID_gatewayId),
+			      (char *)attr_get_quasi_static(ATTR_ID_gateway_id),
 			      false);
 
 	ShadowBuilder_AddUint32(pMsg, "eventLogSize",
@@ -1214,13 +1219,15 @@ static void GatewayShadowMaker(bool GreenlistProcessed)
 	JsonMsg_t *pMsg = BP_TRY_TO_TAKE(
 		FWK_BUFFER_MSG_SIZE(JsonMsg_t, SENSOR_GATEWAY_SHADOW_MAX_SIZE));
 	if (pMsg == NULL) {
+		LOG_ERR("Bad memory allocation. Resetting...");
+		wdt_force();
 		return;
 	}
 	pMsg->header.msgCode = FMC_GATEWAY_OUT;
 	pMsg->header.rxId = FWK_ID_CLOUD;
 	pMsg->size = SENSOR_GATEWAY_SHADOW_MAX_SIZE;
 
-	ShadowBuilder_Start(pMsg, SKIP_MEMSET);
+	ShadowBuilder_Start(pMsg, DO_MEMSET);
 	ShadowBuilder_StartGroup(pMsg, "state");
 	/* Setting the desired group to null lets the cloud know
 	 * that its request was processed.
@@ -1404,7 +1411,7 @@ static void CreateConfigRequest(SensorEntry_t *pEntry)
 			SENSOR_ADDR_STR_LEN);
 		strcpy(pMsg->cmd, pCmd);
 		FRAMEWORK_MSG_SEND(pMsg);
-	}
+	} else{}
 }
 
 static bt_addr_t BtAddrStringToStruct(const char *pAddrString)
@@ -1437,6 +1444,8 @@ static void PublishToGetAccepted(SensorEntry_t *pEntry)
 	size_t size = sizeof(GET_ACCEPTED_MSG);
 	JsonMsg_t *pMsg = BufferPool_Take(FWK_BUFFER_MSG_SIZE(JsonMsg_t, size));
 	if (pMsg == NULL) {
+		LOG_ERR("Bad memory allocation. Resetting...");
+		wdt_force();
 		return;
 	}
 

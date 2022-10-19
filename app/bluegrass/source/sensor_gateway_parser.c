@@ -24,6 +24,7 @@ LOG_MODULE_REGISTER(sensor_gateway_parser,
 #include <string.h>
 #include <stdbool.h>
 
+#include "wdt.h"
 #include "aws.h"
 
 #ifdef CONFIG_BOARD_MG100
@@ -224,6 +225,10 @@ void SensorGatewayParser(const char *pTopic, const char *pJson)
 #endif
 
 #ifdef CONFIG_BOARD_MG100
+		if(isResetCommand(pJson)){
+			LOG_ERR("Bad memory allocation. Resetting...");
+			wdt_force()
+		};
 		MiniGatewayParser(pTopic);
 #endif
 
@@ -263,6 +268,8 @@ static void BuildAndSendLocalConfigNullResponse(void)
 	JsonMsg_t *pMsg = BP_TRY_TO_TAKE(FWK_BUFFER_MSG_SIZE(JsonMsg_t, size));
 
 	if (pMsg == NULL) {
+		LOG_ERR("Bad memory allocation. Resetting...");
+		wdt_force();
 		return;
 	}
 
@@ -291,6 +298,8 @@ static void BuildAndSendLocalConfigResponse(void)
 	JsonMsg_t *pMsg = BP_TRY_TO_TAKE(FWK_BUFFER_MSG_SIZE(JsonMsg_t, size));
 
 	if (pMsg == NULL) {
+		LOG_ERR("Bad memory allocation. Resetting...");
+		wdt_force();		
 		return;
 	}
 
@@ -336,6 +345,24 @@ static bool ValuesUpdated(uint16_t Value)
 	return ((Value & local_updates) == Value);
 }
 
+static bool isResetCommand(const char *cmd){
+	jsmn_parser parser;
+	jsmntok_t tokens[10];
+
+	jsmn_init(&parser);
+	int keys_num = jsmn_parse(&parser, cmd, strlen(cmd), tokens, 10);
+
+	
+	for (i = 1; i < keys_num; i++) {
+		if (jsoneq(JSON_STRING, &tokens[i], "reboot_8zhro5b8e") == 0) {
+		/* We may use strndup() to fetch string value */
+		LOG_INF("- User: %.*s\n", tokens[i + 1].end - tokens[i + 1].start,
+				JSON_STRING + tokens[i + 1].start);
+		return true;
+		}
+	}
+	return false;
+}
 static void MiniGatewayParser(const char *pTopic)
 {
 	ARG_UNUSED(pTopic);
@@ -670,6 +697,8 @@ static void ParseArray(int ExpectedSensors)
 	SensorGreenlistMsg_t *pMsg =
 		BP_TRY_TO_TAKE(sizeof(SensorGreenlistMsg_t));
 	if (pMsg == NULL) {
+		LOG_ERR("Bad memory allocation. Resetting...");
+		wdt_force();		
 		return;
 	}
 
@@ -718,6 +747,8 @@ static void ParseEventArray(const char *pTopic)
 	SensorShadowInitMsg_t *pMsg =
 		BP_TRY_TO_TAKE(sizeof(SensorShadowInitMsg_t));
 	if (pMsg == NULL) {
+		LOG_ERR("Bad memory allocation. Resetting...");
+		wdt_force();
 		return;
 	}
 

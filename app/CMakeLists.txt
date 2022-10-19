@@ -1,29 +1,63 @@
 cmake_minimum_required(VERSION 3.13.1)
 
+set(lcz_module_path ${CMAKE_SOURCE_DIR}/../../modules/lib/laird_connect)
+
+if (CONFIG_LWM2M)
+list(APPEND OVERLAY_CONFIG
+    ${CMAKE_SOURCE_DIR}/overlay_lwm2m_dtls.conf
+)
+endif()
+
 # Add configuration for building with mcuboot
 # because it cannot be done with relative paths in VS code on Windows
 if((BOARD STREQUAL mg100) OR (BOARD STREQUAL pinnacle_100_dvk))
-set(mcuboot_DTC_OVERLAY_FILE
-    ${CMAKE_SOURCE_DIR}/boards/pinnacle_100.overlay
+set(mcuboot_CONF_FILE
+    ${lcz_module_path}/zephyr_lib/mcuboot_config/pinnacle_100.conf
 )
 
-set(mcuboot_CONF_FILE
-    ${CMAKE_SOURCE_DIR}/../../modules/zephyr_lib/mcuboot_config/pinnacle_100.conf
+if (CONFIG_LWM2M)
+list(APPEND OVERLAY_CONFIG
+    ${CMAKE_SOURCE_DIR}/overlay_lwm2m_pinnacle_100.conf
 )
+endif()
+
 elseif((BOARD STREQUAL bl5340_dvk_cpuapp) OR (BOARD STREQUAL bl5340pa_dvk_cpuapp))
 set(mcuboot_CONF_FILE
-    ${CMAKE_SOURCE_DIR}/../../modules/zephyr_lib/mcuboot_config/bl5340.conf
+    ${lcz_module_path}/zephyr_lib/mcuboot_config/bl5340.conf
 )
+endif()
 
 list(APPEND OVERLAY_CONFIG
-    ${CMAKE_SOURCE_DIR}/../../modules/zephyr_lib/mcumgr_wrapper/config/overlay-mcuboot.conf
+    ${lcz_module_path}/zephyr_lib/mcumgr_wrapper/config/overlay-mcuboot.conf
 )
 
 # Use static partition layout for board
 set(PM_STATIC_YML_FILE
-    ${CMAKE_SOURCE_DIR}/../../modules/zephyr_lib/mcuboot_config/pm_static.${BOARD}.yml
+    ${lcz_module_path}/zephyr_lib/mcuboot_config/pm_static.${BOARD}.yml
 )
-endif()
+
+# Generate build ID based on UTC timestamp
+string(TIMESTAMP build_time "%s" UTC)
+set(APP_VERSION_BUILD ${build_time})
+set(gen_dir ${CMAKE_BINARY_DIR}/zephyr/include/generated/app)
+set(ver_file ${gen_dir}/app_version.h)
+configure_file(${CMAKE_SOURCE_DIR}/version/app_version.h.in ${ver_file})
+# Get application version
+file(READ ${ver_file} ver)
+string(REGEX MATCH "APP_VERSION_MAJOR ([0-9]+)" _ ${ver})
+set(ver_major ${CMAKE_MATCH_1})
+string(REGEX MATCH "APP_VERSION_MINOR ([0-9]+)" _ ${ver})
+set(ver_minor ${CMAKE_MATCH_1})
+string(REGEX MATCH "APP_VERSION_PATCH ([0-9]+)" _ ${ver})
+set(ver_patch ${CMAKE_MATCH_1})
+set(app_version ${ver_major}.${ver_minor}.${ver_patch}+${build_time})
+message("app version: ${app_version}")
+
+# Set application version for mcuboot
+set(mcuboot_ver_conf ${CMAKE_BINARY_DIR}/generated_app_version.conf)
+set(APP_IMAGE_VERSION ${app_version})
+set(MEMFAULT_APP_VERSION ${ver_major}.${ver_minor}.${ver_patch})
+configure_file(${CMAKE_SOURCE_DIR}/version/app_version.conf.in ${mcuboot_ver_conf})
 
 # Prepend the additional boards directory but still allow the original Zephyr
 # boards directory to be used with lower priority
@@ -34,6 +68,11 @@ project(oob_demo)
 
 if(CONFIG_LCZ_MEMFAULT)
 zephyr_include_directories(${CMAKE_SOURCE_DIR}/memfault)
+if((BOARD STREQUAL mg100) OR (BOARD STREQUAL pinnacle_100_dvk))
+zephyr_include_directories(${CMAKE_SOURCE_DIR}/memfault/mg100)
+elseif((BOARD STREQUAL bl5340_dvk_cpuapp) OR (BOARD STREQUAL bl5340pa_dvk_cpuapp))
+zephyr_include_directories(${CMAKE_SOURCE_DIR}/memfault/bl5340)
+endif()
 endif()
 
 target_sources(app PRIVATE
@@ -103,8 +142,9 @@ target_sources_ifdef(CONFIG_WDT app PRIVATE
     ${CMAKE_SOURCE_DIR}/common/src/wdt.c)
 
 include_directories(${CMAKE_SOURCE_DIR}/common/include)
+include_directories(${gen_dir})
 include_directories(${CMAKE_SOURCE_DIR}/framework_config)
-include_directories(${CMAKE_SOURCE_DIR}/../../modules/jsmn)
+include_directories(${CMAKE_SOURCE_DIR}/../../modules/lib/jsmn)
 
 if(CONFIG_BOARD_MG100)
 target_sources(app PRIVATE
@@ -135,6 +175,11 @@ include_directories(${CMAKE_SOURCE_DIR}/lwm2m/include)
 target_sources(app PRIVATE
     ${CMAKE_SOURCE_DIR}/lwm2m/source/lcz_lwm2m_client.c
 )
+if(CONFIG_LCZ_LWM2M_MEMFAULT_TASK)
+target_sources(app PRIVATE
+    ${CMAKE_SOURCE_DIR}/lwm2m/source/memfault_task.c
+)
+endif()
 endif()
 
 if(CONFIG_LCZ_LWM2M_SENSOR)
@@ -153,6 +198,12 @@ endif()
 if(CONFIG_LCZ_LWM2M_CONN_MON)
 target_sources(app PRIVATE
     ${CMAKE_SOURCE_DIR}/lwm2m/source/lcz_lwm2m_conn_mon.c
+)
+endif()
+
+if(CONFIG_LWM2M_UCIFI_BATTERY)
+target_sources(app PRIVATE
+    ${CMAKE_SOURCE_DIR}/lwm2m/source/lcz_lwm2m_battery.c
 )
 endif()
 

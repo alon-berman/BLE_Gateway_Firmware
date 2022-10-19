@@ -1,0 +1,31 @@
+# Copyright (c) 2021 Laird Connectivity
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig ESS_SENSOR
+    bool "ESS (BL654 sensor board) support"
+
+if ESS_SENSOR
+
+config ESS_SENSOR_LOG_LEVEL
+    int "Log level for ESS module"
+    range 0 4
+    default 3
+
+config ESS_SENSOR_SEND_TO_AWS_RATE_SECONDS
+    int "The period at which to send ESS device data to AWS"
+    default 60
+    range 30 3600
+
+config ESS_SENSOR_LEGACY_BL654_SENSOR_NAME
+    string "Advertised name of the (legacy) BL654 sensor board"
+    default "BL654 BME280 Sensor"
+    help
+        The Pinnacle 100 development kit ships with a BL654 sensor board
+        which has an ESS (environmental sensing service) application
+        running on it, due to a bug in the code, it does not advertise
+        the service UUIDs and therefore scanning for this device must be
+        based on the name of the sensor, configured here. This is not
+        required if using the Zephyr-based ESS sample code which
+        advertises with the ESS UUID.
+
+endif # ESS_SENSOR

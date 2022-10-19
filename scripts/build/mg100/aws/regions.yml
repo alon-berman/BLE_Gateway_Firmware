@@ -1,0 +1,21 @@
+external_flash:
+  base_address: 0x0
+  device: MX25R64
+  dynamic_partition: null
+  name: external_flash
+  placement_strategy: start_to_end
+  size: 0x800000
+flash_primary:
+  base_address: 0x0
+  device: NRF_FLASH_DRV_NAME
+  dynamic_partition: null
+  name: flash_primary
+  placement_strategy: complex
+  size: 0x100000
+sram_primary:
+  base_address: 0x20000000
+  device: ''
+  dynamic_partition: sram_primary
+  name: sram_primary
+  placement_strategy: complex
+  size: 0x40000

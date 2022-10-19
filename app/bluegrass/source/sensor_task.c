@@ -20,6 +20,7 @@ LOG_MODULE_REGISTER(sensor_task, CONFIG_SENSOR_TASK_LOG_LEVEL);
 #include <bluetooth/gatt.h>
 #include <bluetooth/bluetooth.h>
 
+#include "wdt.h"
 #include "FrameworkIncludes.h"
 #include "lcz_bracket.h"
 #include "lcz_bluetooth.h"
@@ -869,6 +870,9 @@ static void CreateAndSendResponseMsg(bracket_t *p)
 		pMsg->size = bufSize;
 		pMsg->length = lcz_bracket_copy(p, pMsg->buffer);
 		FRAMEWORK_MSG_SEND(pMsg);
+	} else{
+		LOG_ERR("Bad memory allocation. Resetting...");
+		wdt_force();
 	}
 	lcz_bracket_reset(p);
 }
@@ -917,6 +921,8 @@ static void SensorTaskAdvHandler(const bt_addr_le_t *addr, int8_t rssi,
 
 		AdvMsg_t *pMsg = BP_TRY_TO_TAKE(sizeof(AdvMsg_t));
 		if (pMsg == NULL) {
+			LOG_ERR("Bad memory allocation. Resetting...");
+			wdt_force();			
 			return;
 		}
 

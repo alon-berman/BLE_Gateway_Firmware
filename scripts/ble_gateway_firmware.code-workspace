@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../pinnacle_100_firmware_public_manifest"
+		},
+		{
+			"path": "../modules/lib/laird_connect"
+		},
+		{
+			"path": "../nrf"
+		},
+		{
+			"path": "../zephyr"
+		},
+	],
+	"settings": {}
+}

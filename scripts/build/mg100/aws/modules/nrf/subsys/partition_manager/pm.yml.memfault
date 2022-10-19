@@ -1,0 +1,4 @@
+memfault_storage:
+  placement: {before: [end]}
+  size: 0x8000
+  align: {start: 0x1000}
