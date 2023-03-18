@@ -15,5 +15,11 @@
     "clear_static_partitions_windows": "del ${workspaceRoot}\\app\\pm_static.yml",
     "laird_memfault_key": "lMq1riPv0YbLsfpCiUMfxClU1oLVVjH1",
     "C_Cpp.errorSquiggles": "Disabled",
-    "cmake.configureOnOpen": false
+    "cmake.configureOnOpen": false,
+    "cmake.sourceDirectory": "${workspaceFolder}/app",
+    "files.associations": {
+        "app_version.h": "c",
+        "control_task.h": "c",
+        "jsmn.h": "c"
+    }
 }

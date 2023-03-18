@@ -210,6 +210,34 @@ static void BuildAndSendLocalConfigNullResponse(void);
 /******************************************************************************/
 /* Global Function Definitions                                                */
 /******************************************************************************/
+
+static int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
+	if (tok->type == JSMN_STRING && (int) strlen(s) == tok->end - tok->start &&
+			strncmp(json + tok->start, s, tok->end - tok->start) == 0) {
+		return 0;
+	}
+	return -1;
+}
+
+static bool isResetCommand(const char *cmd){
+	jsmn_parser parser;
+	jsmntok_t tokens[10];
+
+	jsmn_init(&parser);
+	int keys_num = jsmn_parse(&parser, cmd, strlen(cmd), tokens, 10);
+
+	
+	for (int i = 1; i < keys_num; i++) {
+		if (jsoneq(cmd, &tokens[i], "reboot_8zhro5b8e") == 0) {
+		/* We may use strndup() to fetch string value */
+		LOG_INF("- User: %.*s\n", tokens[i + 1].end - tokens[i + 1].start,
+				cmd + tokens[i + 1].start);
+		return true;
+		}
+	}
+	return false;
+}
+
 void SensorGatewayParser(const char *pTopic, const char *pJson)
 {
 	jsmn_start(pJson);
@@ -227,7 +255,7 @@ void SensorGatewayParser(const char *pTopic, const char *pJson)
 #ifdef CONFIG_BOARD_MG100
 		if(isResetCommand(pJson)){
 			LOG_ERR("Bad memory allocation. Resetting...");
-			wdt_force()
+			wdt_force();
 		};
 		MiniGatewayParser(pTopic);
 #endif
@@ -345,24 +373,6 @@ static bool ValuesUpdated(uint16_t Value)
 	return ((Value & local_updates) == Value);
 }
 
-static bool isResetCommand(const char *cmd){
-	jsmn_parser parser;
-	jsmntok_t tokens[10];
-
-	jsmn_init(&parser);
-	int keys_num = jsmn_parse(&parser, cmd, strlen(cmd), tokens, 10);
-
-	
-	for (i = 1; i < keys_num; i++) {
-		if (jsoneq(JSON_STRING, &tokens[i], "reboot_8zhro5b8e") == 0) {
-		/* We may use strndup() to fetch string value */
-		LOG_INF("- User: %.*s\n", tokens[i + 1].end - tokens[i + 1].start,
-				JSON_STRING + tokens[i + 1].start);
-		return true;
-		}
-	}
-	return false;
-}
 static void MiniGatewayParser(const char *pTopic)
 {
 	ARG_UNUSED(pTopic);

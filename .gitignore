@@ -5,3 +5,4 @@ app/attributes/__pycache__/
 app/attributes/logs/
 __pycache__/
 version.txt
+app/build
