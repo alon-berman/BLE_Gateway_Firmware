@@ -1,22 +1,25 @@
 {
-  "configurations": [
-    {
-      "name": "zephyr",
-      "browse": {
-        "path": ["${workspaceFolder}"],
-        "limitSymbolsToIncludedHeaders": true
-      },
-      "includePath": [
-        "${workspaceFolder}/../zephyr/**",
-        "${workspaceFolder}/../modules/**",
-        "${workspaceFolder}/build/**",
-        "${workspaceFolder}/app/**",
-        "${workspaceFolder}/../nrfxlib/**",
-        "${workspaceFolder}/../mbedtls/**"
-      ],
-      "cStandard": "c99",
-      "intelliSenseMode": "gcc-arm"
-    }
-  ],
-  "version": 4
+    "configurations": [
+        {
+            "name": "zephyr",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            },
+            "includePath": [
+                "${workspaceFolder}/../zephyr/**",
+                "${workspaceFolder}/../modules/**",
+                "${workspaceFolder}/build/**",
+                "${workspaceFolder}/app/**",
+                "${workspaceFolder}/../nrfxlib/**",
+                "${workspaceFolder}/../mbedtls/**"
+            ],
+            "cStandard": "c99",
+            "intelliSenseMode": "gcc-arm",
+            "configurationProvider": "ms-vscode.cmake-tools"
+        }
+    ],
+    "version": 4
 }

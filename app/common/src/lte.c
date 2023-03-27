@@ -80,7 +80,7 @@ static const struct lcz_led_blink_pattern NETWORK_SEARCH_LED_PATTERN = {
 };
 
 // Maximum allowed LTE dc's before hard resetting system
-#define MAX_DISCONNECTS_PER_SESSION 5
+#define MAX_DISCONNECTS_PER_SESSION 2
 
 #ifdef CONFIG_LCZ_MEMFAULT
 #define BUILD_ID_SIZE 9

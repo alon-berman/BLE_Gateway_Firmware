@@ -290,9 +290,9 @@ static DispatchResult_t heartbeat_msg_handler(FwkMsgReceiver_t *pMsgRxer,
 
 	awsPublishHeartbeat();
 
-#if CONFIG_AWS_HEARTBEAT_SECONDS != 0
-	k_work_schedule(&bg.heartbeat, K_SECONDS(CONFIG_AWS_HEARTBEAT_SECONDS));
-#endif
+// #if CONFIG_AWS_HEARTBEAT_SECONDS != 0
+	k_work_schedule(&bg.heartbeat, K_SECONDS(1200));
+// #endif
 
 	return DISPATCH_OK;
 }

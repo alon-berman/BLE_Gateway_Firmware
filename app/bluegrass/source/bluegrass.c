@@ -142,36 +142,36 @@ DispatchResult_t bluegrass_msg_handler(FwkMsgReceiver_t *pMsgRxer,
 
 int bluegrass_subscription_handler(void)
 {
-	int rc = 0;
+	int resp_code = 0;
 
 	if (!awsConnected()) {
 		bg.subscription_delay = CONNECT_TO_SUBSCRIBE_DELAY;
-		return rc;
+		return resp_code;
 	}
 
 	if (CONFIG_USE_SINGLE_AWS_TOPIC) {
-		return rc;
+		return resp_code;
 	}
 
 	if (bg.subscription_delay > 0) {
 		bg.subscription_delay -= 1;
-		return rc;
+		return resp_code;
 	}
 
 	if (!bg.subscribed_to_get_accepted) {
-		rc = awsGetAcceptedSubscribe();
-		if (rc == 0) {
+		resp_code = awsGetAcceptedSubscribe();
+		if (resp_code == 0) {
 			bg.subscribed_to_get_accepted = true;
 		}
 	}
 
 	if (!bg.get_shadow_processed) {
-		rc = awsGetShadow();
+		resp_code = awsGetShadow();
 	}
 
 	if (bg.get_shadow_processed && !bg.gateway_subscribed) {
-		rc = awsSubscribe(GATEWAY_TOPIC, true);
-		if (rc == 0) {
+		resp_code = awsSubscribe(GATEWAY_TOPIC, true);
+		if (resp_code == 0) {
 			bg.gateway_subscribed = true;
 
 			FRAMEWORK_MSG_CREATE_AND_BROADCAST(FWK_ID_CLOUD,
@@ -179,7 +179,7 @@ int bluegrass_subscription_handler(void)
 		}
 	}
 
-	return rc;
+	return resp_code;
 }
 
 /******************************************************************************/
@@ -260,10 +260,10 @@ static DispatchResult_t get_accepted_msg_handler(FwkMsgReceiver_t *pMsgRxer,
 {
 	ARG_UNUSED(pMsgRxer);
 	ARG_UNUSED(pMsg);
-	int r;
+	int response_code;
 
-	r = awsGetAcceptedUnsub();
-	if (r == 0) {
+	response_code = awsGetAcceptedUnsub();
+	if (response_code == 0) {
 		bg.get_shadow_processed = true;
 	}
 	return DISPATCH_OK;

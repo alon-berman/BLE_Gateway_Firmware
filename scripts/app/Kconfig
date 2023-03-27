@@ -76,7 +76,7 @@ config AWS_DATA_SEND_LED_OFF_DURATION_MILLISECONDS
 
 config AWS_HEARTBEAT_SECONDS
     int "Rate at which to send LTE info and battery status"
-    default 120
+    default 1200
 
 config AWS_PUBLISH_WATCHDOG_SECONDS
     int "Watchdog timeout for successful AWS publish"
@@ -119,19 +119,19 @@ config SENSOR_TOPIC_FMT_STR_PREFIX
 
 config SHADOW_IN_MAX_SIZE
     int "Maximum size of subscription/shadow that can be processed"
-    default 8192
+    default 16384
     help
         The timestamps can make the shadow larger than 7K bytes.
 
 config SENSOR_TABLE_SIZE
     int "Number of sensors viewable on Bluegrass gateway page"
-    default 5
-    range 0 5
+    default 11
+    range 0 12
 
 config SENSOR_GREENLIST_SIZE
     int "Number of sensors enabled for config and data collection"
-    default 3
-    range 0 3
+    default 10
+    range 0 10
 
 config SENSOR_LOG_MAX_SIZE
     int "The maximum number of stored sensor events"
