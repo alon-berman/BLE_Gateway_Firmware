@@ -6,3 +6,5 @@ app/attributes/logs/
 __pycache__/
 version.txt
 app/build
+*.zip
+*/**/build
