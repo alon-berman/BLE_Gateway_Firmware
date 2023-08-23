@@ -47,7 +47,7 @@ if __name__ == '__main__':
     parser.add_argument('-ct','--conntype', type=str,
                         help='the connection type', default='serial'),
     parser.add_argument('-cs','--connstring', type=str,
-                        help='the connection type', default='/dev/ttyUSB1'),
+                        help='the connection type', default='/dev/ttyUSB0'),
     parser.add_argument('--image_path', type=str,
                         help='path to .bin image', default=os.path.join('build', 'mg100','aws','zephyr','app_update.bin'))
 
