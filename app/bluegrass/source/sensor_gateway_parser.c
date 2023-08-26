@@ -100,7 +100,7 @@ static const char SCALE_STRING[] = "scale";
 static const char ACT_THRESH_STRING[] = "activationThreshold";
 static const char MAX_LOG_SIZE_STRING[] = "maxLogSizeMB";
 
-#define JSON_DEFAULT_BUF_SIZE (2048)
+#define JSON_DEFAULT_BUF_SIZE 2548
 BUILD_ASSERT((JSON_DEFAULT_BUF_SIZE * 2) + 256 < CONFIG_BUFFER_POOL_SIZE,
 	     "Buffer pool too small: Need space for 2 messages"
 	     "(and system messages)");

@@ -50,11 +50,11 @@ config AWS_TOPIC_MAX_SIZE
 
 config MQTT_RX_BUFFER_SIZE
     int "Size of buffer for MQTT rx path"
-    default 1024
+    default 2350
 
 config MQTT_TX_BUFFER_SIZE
     int "Size of buffer for MQTT tx path"
-    default 1536
+    default 2350
 
 menuconfig BLUEGRASS
     bool "Laird Connectivity Bluegrass cloud"
@@ -119,23 +119,23 @@ config SENSOR_TOPIC_FMT_STR_PREFIX
 
 config SHADOW_IN_MAX_SIZE
     int "Maximum size of subscription/shadow that can be processed"
-    default 8192
+    default 14500
     help
         The timestamps can make the shadow larger than 7K bytes.
 
 config SENSOR_TABLE_SIZE
     int "Number of sensors viewable on Bluegrass gateway page"
-    default 11
-    range 0 12
+    default 14
+    range 0 18
 
 config SENSOR_GREENLIST_SIZE
     int "Number of sensors enabled for config and data collection"
-    default 10
-    range 0 10
+    default 13
+    range 0 17
 
 config SENSOR_LOG_MAX_SIZE
     int "The maximum number of stored sensor events"
-    default 15
+    default 14
     range 1 30
     help
         Limited by the memory pool (heap) and buffer pool (framework).
@@ -143,7 +143,7 @@ config SENSOR_LOG_MAX_SIZE
 
 config SENSOR_SUBSCRIPTION_DELAY_SECONDS
     int "Delay after greenlist before subscription to delta/get topics."
-    default 10
+    default 30
     range 6 60
     help
         The server needs time to generate the sensor object.
@@ -151,7 +151,7 @@ config SENSOR_SUBSCRIPTION_DELAY_SECONDS
 
 config SENSOR_CONFIG_DELAY_SECONDS
     int "Delay before sensor is configured/dumped after greenlist ack"
-    default 10
+    default 30
     range 6 60
     help
         Prevent reading of sensor settings during AWS disconnect that
@@ -229,7 +229,7 @@ config APP_TOPIC_PREFIX_FILE_NAME
 config AWS_LOG_LEVEL
     int "AWS Log level"
     range 0 4
-    default 3
+    default 4
 
 config LTE_LOG_LEVEL
     int "LTE Log level"
@@ -239,12 +239,12 @@ config LTE_LOG_LEVEL
 config SENSOR_TASK_LOG_LEVEL
     int "Sensor Task Log level"
     range 0 4
-    default 3
+    default 4
 
 config SENSOR_TABLE_LOG_LEVEL
     int "Sensor Table Log level"
     range 0 4
-    default 3
+    default 4
 
 config SD_CARD_LOG_LEVEL
     int "SD Card Log level"

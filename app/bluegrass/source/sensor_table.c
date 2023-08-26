@@ -71,7 +71,7 @@ BUILD_ASSERT(CONFIG_SENSOR_GREENLIST_SIZE < CONFIG_SENSOR_TABLE_SIZE,
 #define CONFIG_SENSOR_TTL_SECONDS (60 * 2)
 #endif
 
-#define JSON_DEFAULT_BUF_SIZE (1536)
+#define JSON_DEFAULT_BUF_SIZE 2650
 
 /* An empty message can be sent, but a value is sent for test purposes.  */
 #define GET_ACCEPTED_MSG "{\"message\":\"hi\"}"
@@ -90,8 +90,8 @@ BUILD_ASSERT(((sizeof(SENSOR_SUBSCRIPTION_TOPIC_FMT_STR) +
 	(SENSOR_NAME_MAX_SIZE + sizeof('-') + MAX_KEY_STR_LEN)
 #define MANGLED_NAME_MAX_SIZE (MANGLED_NAME_MAX_STR_LEN + 1)
 
-/* {"reported":{"bt510":{"sensors":[["c13a7e4118a2",<epoch>,false], .... */
-#define SENSOR_GATEWAY_SHADOW_MAX_SIZE 600
+/* needs around 14K for 13 sensors {"reported":{"bt510":{"sensors":[["c13a7e4118a2",<epoch>,false], .... */
+#define SENSOR_GATEWAY_SHADOW_MAX_SIZE 14500
 CHECK_BUFFER_SIZE(FWK_BUFFER_MSG_SIZE(JsonMsg_t,
 				      SENSOR_GATEWAY_SHADOW_MAX_SIZE));
 

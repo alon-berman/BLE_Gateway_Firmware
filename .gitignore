@@ -1,5 +1,4 @@
 app/*pm_static*.yml
-build/*
 boards/arm
 app/attributes/__pycache__/
 app/attributes/logs/
@@ -8,3 +7,5 @@ version.txt
 app/build
 *.zip
 */**/build
+.venv/
+build

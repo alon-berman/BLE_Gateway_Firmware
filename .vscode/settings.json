@@ -21,5 +21,9 @@
         "app_version.h": "c",
         "control_task.h": "c",
         "jsmn.h": "c"
-    }
+    },
+    "nrf-connect.applications": [
+        "${workspaceFolder}/app"
+    ],
+    "nrf-connect.toolchain.path": "PATH"
 }

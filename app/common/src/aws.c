@@ -680,18 +680,21 @@ static int subscription_handler(struct mqtt_client *const client,
 	/* Leave room for null to allow easy printing */
 	size_t size = length + 1;
 	if (size > CONFIG_SHADOW_IN_MAX_SIZE) {
+		AWS_LOG_WRN("CONFIG_SHADOW_IN_MAX_SIZE is not sufficient for desired size %d", size);
 		return 0;
 	}
 
 	aws_stats.rx_payload_bytes += length;
-
+	AWS_LOG_WRN(" ### Reading payload mqtt_read_publish_payload");
 	rc = mqtt_read_publish_payload(client, subscription_buffer, length);
+	AWS_LOG_WRN(" ### got rc: %d with length: %d", rc, length );
 	if (rc == length) {
 		subscription_buffer[length] = 0; /* null terminate */
 
 #ifdef CONFIG_JSON_LOG_MQTT_RX_DATA
 		print_json("MQTT Read data", rc, subscription_buffer);
 #endif
+		AWS_LOG_WRN(" ### Entered SensorGatewayParser");
 
 		SensorGatewayParser(topic, subscription_buffer);
 

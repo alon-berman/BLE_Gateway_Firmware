@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.13.1)
 
 set(lcz_module_path ${CMAKE_SOURCE_DIR}/../../modules/lib/laird_connect)
 
+# For compile-time optimizations
+# target_compile_options(app PRIVATE -Os)
+
 if (CONFIG_LWM2M)
 list(APPEND OVERLAY_CONFIG
     ${CMAKE_SOURCE_DIR}/overlay_lwm2m_dtls.conf
