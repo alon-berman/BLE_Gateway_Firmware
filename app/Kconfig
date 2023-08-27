@@ -54,7 +54,7 @@ config MQTT_RX_BUFFER_SIZE
 
 config MQTT_TX_BUFFER_SIZE
     int "Size of buffer for MQTT tx path"
-    default 2350
+    default 2048
 
 menuconfig BLUEGRASS
     bool "Laird Connectivity Bluegrass cloud"
@@ -119,7 +119,7 @@ config SENSOR_TOPIC_FMT_STR_PREFIX
 
 config SHADOW_IN_MAX_SIZE
     int "Maximum size of subscription/shadow that can be processed"
-    default 14500
+    default 11600
     help
         The timestamps can make the shadow larger than 7K bytes.
 
@@ -135,7 +135,7 @@ config SENSOR_GREENLIST_SIZE
 
 config SENSOR_LOG_MAX_SIZE
     int "The maximum number of stored sensor events"
-    default 14
+    default 4
     range 1 30
     help
         Limited by the memory pool (heap) and buffer pool (framework).

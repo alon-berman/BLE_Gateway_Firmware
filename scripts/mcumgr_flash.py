@@ -92,4 +92,5 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     main(**args.__dict__)
+    # python ./scripts/mcumgr_flash.py --image_path ./build/mg100/aws/zephyr/app_update.bin
     print(args)    
