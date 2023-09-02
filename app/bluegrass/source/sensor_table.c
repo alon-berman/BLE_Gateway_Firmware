@@ -613,8 +613,8 @@ void SensorTable_CreateShadowFromDumpResponse(FwkBufMsg_t *pRsp,
 	size_t size = JSON_DEFAULT_BUF_SIZE + pRsp->length + 1;
 	JsonMsg_t *pMsg = BP_TRY_TO_TAKE(FWK_BUFFER_MSG_SIZE(JsonMsg_t, size));
 	if (pMsg == NULL) {
-		LOG_ERR("Bad memory allocation. Resetting...");
-		wdt_force();		
+		LOG_ERR("Bad memory allocation...");
+		// wdt_force();		
 		return;
 	}
 	pMsg->header.msgCode = FMC_SENSOR_PUBLISH;
@@ -886,8 +886,8 @@ static void ShadowMaker(SensorEntry_t *pEntry)
 	JsonMsg_t *pMsg =
 		BP_TRY_TO_TAKE(FWK_BUFFER_MSG_SIZE(JsonMsg_t, SHADOW_BUF_SIZE));
 	if (pMsg == NULL) {
-		LOG_ERR("Bad memory allocation. Resetting...");
-		wdt_force();		
+		LOG_ERR("Bad memory allocation...");
+		// wdt_force();		
 		return;
 	}
 
@@ -1219,8 +1219,8 @@ static void GatewayShadowMaker(bool GreenlistProcessed)
 	JsonMsg_t *pMsg = BP_TRY_TO_TAKE(
 		FWK_BUFFER_MSG_SIZE(JsonMsg_t, SENSOR_GATEWAY_SHADOW_MAX_SIZE));
 	if (pMsg == NULL) {
-		LOG_ERR("Bad memory allocation. Resetting...");
-		wdt_force();
+		LOG_ERR("Bad memory allocation...");
+		// wdt_force();
 		return;
 	}
 	pMsg->header.msgCode = FMC_GATEWAY_OUT;
@@ -1291,6 +1291,7 @@ static size_t GreenlistByAddress(const char *pAddrString, bool NextState)
 static void Greenlist(SensorEntry_t *pEntry, bool Enable)
 {
 	if (Enable) {
+		LOG_WRN("CONFIG_SENSOR_GREENLIST_SIZE=%d", CONFIG_SENSOR_GREENLIST_SIZE);
 		if (greenCount < CONFIG_SENSOR_GREENLIST_SIZE) {
 			pEntry->greenlisted = true;
 			pEntry->subscribed = false;
@@ -1444,8 +1445,8 @@ static void PublishToGetAccepted(SensorEntry_t *pEntry)
 	size_t size = sizeof(GET_ACCEPTED_MSG);
 	JsonMsg_t *pMsg = BufferPool_Take(FWK_BUFFER_MSG_SIZE(JsonMsg_t, size));
 	if (pMsg == NULL) {
-		LOG_ERR("Bad memory allocation. Resetting...");
-		wdt_force();
+		LOG_ERR("Bad memory allocation...");
+		// wdt_force();
 		return;
 	}
 
