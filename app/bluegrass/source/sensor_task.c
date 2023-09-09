@@ -921,8 +921,8 @@ static void SensorTaskAdvHandler(const bt_addr_le_t *addr, int8_t rssi,
 
 		AdvMsg_t *pMsg = BP_TRY_TO_TAKE(sizeof(AdvMsg_t));
 		if (pMsg == NULL) {
-			LOG_ERR("Bad memory allocation. Resetting...");
-			wdt_force();			
+			LOG_ERR("Bad memory allocation in SensorTaskAdvHandler");
+			// wdt_force();			
 			return;
 		}
 

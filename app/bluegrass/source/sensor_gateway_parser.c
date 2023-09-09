@@ -707,8 +707,8 @@ static void ParseArray(int ExpectedSensors)
 	SensorGreenlistMsg_t *pMsg =
 		BP_TRY_TO_TAKE(sizeof(SensorGreenlistMsg_t));
 	if (pMsg == NULL) {
-		LOG_ERR("Bad memory allocation. Resetting...");
-		wdt_force();		
+		LOG_ERR("Bad memory allocation in ParseArray");
+		// wdt_force();		
 		return;
 	}
 
@@ -757,8 +757,8 @@ static void ParseEventArray(const char *pTopic)
 	SensorShadowInitMsg_t *pMsg =
 		BP_TRY_TO_TAKE(sizeof(SensorShadowInitMsg_t));
 	if (pMsg == NULL) {
-		LOG_ERR("Bad memory allocation. Resetting...");
-		wdt_force();
+		LOG_ERR("Bad memory allocation. in ParseEventArray...");
+		// wdt_force();
 		return;
 	}
 

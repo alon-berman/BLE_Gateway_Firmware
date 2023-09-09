@@ -71,7 +71,7 @@ BUILD_ASSERT(CONFIG_SENSOR_GREENLIST_SIZE < CONFIG_SENSOR_TABLE_SIZE,
 #define CONFIG_SENSOR_TTL_SECONDS (60 * 2)
 #endif
 
-#define JSON_DEFAULT_BUF_SIZE 2000
+#define JSON_DEFAULT_BUF_SIZE 1600
 
 /* An empty message can be sent, but a value is sent for test purposes.  */
 #define GET_ACCEPTED_MSG "{\"message\":\"hi\"}"
@@ -91,7 +91,7 @@ BUILD_ASSERT(((sizeof(SENSOR_SUBSCRIPTION_TOPIC_FMT_STR) +
 #define MANGLED_NAME_MAX_SIZE (MANGLED_NAME_MAX_STR_LEN + 1)
 
 /* needs around 14K for 13 sensors {"reported":{"bt510":{"sensors":[["c13a7e4118a2",<epoch>,false], .... */
-#define SENSOR_GATEWAY_SHADOW_MAX_SIZE 12500
+#define SENSOR_GATEWAY_SHADOW_MAX_SIZE 12600
 CHECK_BUFFER_SIZE(FWK_BUFFER_MSG_SIZE(JsonMsg_t,
 				      SENSOR_GATEWAY_SHADOW_MAX_SIZE));
 
@@ -808,7 +808,7 @@ static void AddEntry(SensorEntry_t *pEntry, const bt_addr_t *pAddr, int8_t Rssi)
 	 * because the two formats are the same.
 	 */
 	SensorAddrToString(pEntry);
-	LOG_DBG("Added BT510 sensor %s '%s' RSSI: %d",
+	LOG_WRN("Added BT510 sensor %s '%s' RSSI: %d",
 		log_strdup(pEntry->addrString), log_strdup(pEntry->name),
 		pEntry->rssi);
 	GatewayShadowMaker(false);

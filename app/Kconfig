@@ -50,7 +50,7 @@ config AWS_TOPIC_MAX_SIZE
 
 config MQTT_RX_BUFFER_SIZE
     int "Size of buffer for MQTT rx path"
-    default 2350
+    default 2860
 
 config MQTT_TX_BUFFER_SIZE
     int "Size of buffer for MQTT tx path"

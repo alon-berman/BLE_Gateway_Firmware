@@ -5,10 +5,12 @@ import argparse
 import os
 import subprocess
 from time import sleep
+import time
 import serial
 
 from send_serial_command_to_device import execute_command_over_serial
 
+        
 def extract_hash(output: str) -> str:
     image_hash = None
     image_count = 0 # always take second image.
@@ -32,16 +34,22 @@ def read_from_serial_device(port, baudrate=115200, timeout=1):
     
     try:
         with serial.Serial(port, baudrate, timeout=timeout) as ser:
-            while True:
-                line = ser.readline().decode('utf-8').strip()  # Read a line and decode from bytes to string
-                if line:
-                    print(line)
-                sleep(0.05)  # Optional: sleep for a short duration before the next read
+            with open(f'{time.time()}_mg100.log', 'w+') as file_handler:
+                while True:
+                    line = ser.readline().decode('utf-8').strip()  # Read a line and decode from bytes to string
+                    if line:
+                        print(line)
+                        file_handler.write(line)
+                    sleep(0.05)  # Optional: sleep for a short duration before the next read
+    
     except KeyboardInterrupt:
         print("\nExiting...")
     except serial.SerialException as e:
         print(f"Error: {e}")
-    
+    except UnicodeDecodeError: # try to read again
+        read_from_serial_device(port, baudrate, timeout) # retry
+        
+        
 def main(image_path, timeout, retries, conntype, connstring, set_commission: bool = True):
     execute_command_over_serial("attr set commissioned 0")
     execute_command_over_serial("log halt")
@@ -71,7 +79,8 @@ def main(image_path, timeout, retries, conntype, connstring, set_commission: boo
         sleep(105) # waiting for device to wake
         execute_command_over_serial("attr set commissioned 1")
 
-    read_from_serial_device(port=connstring, baudrate=115200, timeout=3)
+        read_from_serial_device(port=connstring, baudrate=115200, timeout=3)
+
 
 
 if __name__ == '__main__':
