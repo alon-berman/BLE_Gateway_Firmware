@@ -7,8 +7,13 @@ import subprocess
 from time import sleep
 import time
 import serial
+from tqdm import tqdm
 
 from send_serial_command_to_device import execute_command_over_serial
+
+def loading_bar(duration):
+    for _ in tqdm(range(duration), desc="Loading...", ncols=100):
+        time.sleep(1)
 
         
 def extract_hash(output: str) -> str:
@@ -57,29 +62,28 @@ def main(image_path, timeout, retries, conntype, connstring, set_commission: boo
     # define maximal transmission unit size so it. higher values (e.g., 1024) will not work with MG100.
     connstring_w_mtu = connstring + ",mtu=1024"
     print("current image state:")
-    resp = subprocess.check_output(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'list'])
+    resp = subprocess.check_output(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'list', '-t', '10000'])
     print("uploading image to device ....")
     subprocess.run(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'upload', image_path])
-    sleep(5)
+    loading_bar(5)
     print("uploading getting image to device ....")
 
-    resp = subprocess.check_output(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'list'])
+    resp = subprocess.check_output(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'list', '-t', '10000'])
     image_hash = extract_hash(resp.decode().splitlines())
-    sleep(1)
+    loading_bar(1)
     print("Switching images ....")    
     subprocess.run(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'test', str(image_hash).strip()])
-    sleep(1)
-    subprocess.run(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'confirm'])
-    sleep(1)
+    loading_bar(1)
     print("Resetting Device ....")
     subprocess.run(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'reset'])
-    
+    print("Confirming image... this might take time...")
+    loading_bar(105)
+    subprocess.run(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'confirm'])
     if set_commission:
         print("setting commision to 1")
-        sleep(105) # waiting for device to wake
         execute_command_over_serial("attr set commissioned 1")
 
-        read_from_serial_device(port=connstring, baudrate=115200, timeout=3)
+    read_from_serial_device(port=connstring, baudrate=115200, timeout=3)
 
 
 
