@@ -90,8 +90,8 @@ BUILD_ASSERT(((sizeof(SENSOR_SUBSCRIPTION_TOPIC_FMT_STR) +
 	(SENSOR_NAME_MAX_SIZE + sizeof('-') + MAX_KEY_STR_LEN)
 #define MANGLED_NAME_MAX_SIZE (MANGLED_NAME_MAX_STR_LEN + 1)
 
-/* needs around 14K for 13 sensors {"reported":{"bt510":{"sensors":[["c13a7e4118a2",<epoch>,false], .... */
-#define SENSOR_GATEWAY_SHADOW_MAX_SIZE 4501
+/* needs around 5K for 13 sensors {"reported":{"bt510":{"sensors":[["c13a7e4118a2",<epoch>,false], .... */
+#define SENSOR_GATEWAY_SHADOW_MAX_SIZE 4600
 CHECK_BUFFER_SIZE(FWK_BUFFER_MSG_SIZE(JsonMsg_t,
 				      SENSOR_GATEWAY_SHADOW_MAX_SIZE));
 
@@ -302,9 +302,9 @@ void SensorTable_ProcessGreenlistRequest(SensorGreenlistMsg_t *pMsg)
 	LOG_DBG("Greenlist setting changed for %u sensors", changed);
 
 	/* Filter out deltas due to timestamp changing. */
-	if (changed > 0) {
-		GatewayShadowMaker(true);
-	}
+	// if (changed > 0) {
+	// 	GatewayShadowMaker(true);
+	// }
 }
 
 DispatchResult_t SensorTable_AddConfigRequest(SensorCmdMsg_t *pMsg)
@@ -728,7 +728,7 @@ static void AdEventHandler(LczSensorAdEvent_t *p, int8_t Rssi, uint32_t Index)
 		sdCardLogAdEvent(p);
 #endif
 		/* The cloud uses the RX epoch (in the table) for filtering. */
-		GatewayShadowMaker(false);
+		// GatewayShadowMaker(false);
 	}
 }
 
@@ -811,7 +811,7 @@ static void AddEntry(SensorEntry_t *pEntry, const bt_addr_t *pAddr, int8_t Rssi)
 	LOG_WRN("Added BT510 sensor %s '%s' RSSI: %d",
 		log_strdup(pEntry->addrString), log_strdup(pEntry->name),
 		pEntry->rssi);
-	GatewayShadowMaker(false);
+	// GatewayShadowMaker(false);
 }
 
 /* Find index of advertiser's address in the sensor table */

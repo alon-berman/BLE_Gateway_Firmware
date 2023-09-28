@@ -56,13 +56,14 @@ def read_from_serial_device(port, baudrate=115200, timeout=1):
         
         
 def main(image_path, timeout, retries, conntype, connstring, set_commission: bool = True):
-    execute_command_over_serial("attr set commissioned 0")
-    execute_command_over_serial("log halt")
+    execute_command_over_serial("attr set commissioned 0", device=connstring)
+    execute_command_over_serial("log halt", device=connstring)
     sleep(3)
     # define maximal transmission unit size so it. higher values (e.g., 1024) will not work with MG100.
     connstring_w_mtu = connstring + ",mtu=1024"
     print("current image state:")
     resp = subprocess.check_output(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'list', '-t', '10000'])
+    print(resp)
     print("uploading image to device ....")
     subprocess.run(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'upload', image_path])
     loading_bar(5)
@@ -81,7 +82,7 @@ def main(image_path, timeout, retries, conntype, connstring, set_commission: boo
     subprocess.run(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring_w_mtu, 'image', 'confirm'])
     if set_commission:
         print("setting commision to 1")
-        execute_command_over_serial("attr set commissioned 1")
+        execute_command_over_serial("attr set commissioned 1", device=connstring)
 
     read_from_serial_device(port=connstring, baudrate=115200, timeout=3)
 
