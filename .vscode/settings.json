@@ -20,7 +20,10 @@
     "files.associations": {
         "app_version.h": "c",
         "control_task.h": "c",
-        "jsmn.h": "c"
+        "jsmn.h": "c",
+        "sensor_task.h": "c",
+        "sensor_table.h": "c",
+        "lte.h": "c"
     },
     "nrf-connect.applications": [
         "${workspaceFolder}/app"

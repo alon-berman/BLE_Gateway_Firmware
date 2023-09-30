@@ -254,7 +254,7 @@ void SensorGatewayParser(const char *pTopic, const char *pJson)
 
 #ifdef CONFIG_BOARD_MG100
 		if(isResetCommand(pJson)){
-			LOG_ERR("Bad memory allocation. Resetting...");
+			LOG_ERR("Reset Requested!...");
 			wdt_force();
 		};
 		MiniGatewayParser(pTopic);

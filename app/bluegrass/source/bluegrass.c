@@ -14,7 +14,6 @@ LOG_MODULE_REGISTER(bluegrass, CONFIG_BLUEGRASS_LOG_LEVEL);
 /* Includes                                                                   */
 /******************************************************************************/
 #include <kernel.h>
-
 #include "aws.h"
 #include "sensor_task.h"
 #include "sensor_table.h"
@@ -289,6 +288,7 @@ static DispatchResult_t heartbeat_msg_handler(FwkMsgReceiver_t *pMsgRxer,
 	ARG_UNUSED(pMsg);
 
 	awsPublishHeartbeat();
+	GatewayShadowMaker(false);
 
 #if CONFIG_AWS_HEARTBEAT_SECONDS != 0
 	k_work_schedule(&bg.heartbeat, K_SECONDS(CONFIG_AWS_HEARTBEAT_SECONDS));

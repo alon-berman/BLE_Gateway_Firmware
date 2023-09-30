@@ -83,6 +83,7 @@ typedef struct SensorCmdMsg {
 /**
  * @note Functions must be called from the same thread.
  */
+void GatewayShadowMaker(bool GreenlistProcessed);
 
 /**
  * @brief Initializes sensor table.

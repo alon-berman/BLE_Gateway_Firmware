@@ -176,7 +176,6 @@ static void ShadowRspHandler(JsonMsg_t *pMsg, SensorEntry_t *pEntry);
 static void ShadowFlagHandler(JsonMsg_t *pMsg, SensorEntry_t *pEntry);
 static void ShadowLogHandler(JsonMsg_t *pMsg, SensorEntry_t *pEntry);
 static void ShadowSpecialHandler(JsonMsg_t *pMsg, SensorEntry_t *pEntry);
-static void GatewayShadowMaker(bool GreenlistProcessed);
 
 static char *MangleKey(const char *pKey, const char *pName);
 static size_t GreenlistByAddress(const char *pAddrString, bool NextState);
@@ -1206,7 +1205,7 @@ static void SensorAddrToString(SensorEntry_t *pEntry)
 	FRAMEWORK_ASSERT(count == SENSOR_ADDR_STR_LEN);
 }
 
-static void GatewayShadowMaker(bool GreenlistProcessed)
+void GatewayShadowMaker(bool GreenlistProcessed)
 {
 	if (CONFIG_USE_SINGLE_AWS_TOPIC) {
 		return;
