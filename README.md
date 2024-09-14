@@ -7,3 +7,8 @@
 # BLE Gateway Firmware
 
 Documentation for the BLE Gateway Firmware is [HERE!](https://lairdcp.github.io/guides/ble-gateway-firmware/1.0/Introduction.html)
+
+
+# Burn Example:
+
+python ./scripts/mcumgr_flash.py --image_path /home/bermanalon/git/etoot-gw-fw/ble_gateway_firmware/etoot_mg100_gw_fw_1.2.0-rc2/build/mg100/aws/zephyr/app_update.bin 

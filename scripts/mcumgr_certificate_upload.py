@@ -1,6 +1,3 @@
-
-
-
 import argparse
 import os
 import re
@@ -26,21 +23,19 @@ def find_first_file_by_pattern(pattern, dir_path):
 def main(cert_folder, timeout, retries, conntype, connstring):
     # mcumgr -t 5 -r 2 --conntype serial --connstring dev=/dev/ttyUSB0,mtu=1024 fs upload /path/to/cert_folder/AmazonRootCA1.pem /lfs/root_ca.pe
     
-    # define maximal transmission unit size so it. higher values (e.g., 1024) will not work with MG100.
-    connstring += ",mtu=1024"
     print("uploading certificates ....")
-    execute_command_over_serial("log halt")
-    execute_command_over_serial("attr set commissioned 0")
+    execute_command_over_serial("log halt",device=connstring)
+    execute_command_over_serial("attr set commissioned 0", device=connstring)
 
     for file_regex_pattern, dest_path in CERTS_TO_UPLOAD:
         abs_cert_file_path = find_first_file_by_pattern(file_regex_pattern, cert_folder)
         subprocess.run(["mcumgr", '-t', str(timeout), '-r', str(retries), '--conntype', conntype, '--connstring', connstring, 'fs', 'upload', abs_cert_file_path, dest_path])
         sleep(3)
         print(f"Uploaded {abs_cert_file_path} to {dest_path}")
-    execute_command_over_serial("attr set endpoint a3t01gae6daupy-ats.iot.us-east-1.amazonaws.com")
-    execute_command_over_serial("attr set commissioned 1")
+    execute_command_over_serial("attr set endpoint a3t01gae6daupy-ats.iot.us-east-1.amazonaws.com",device=connstring)
+    execute_command_over_serial("attr set commissioned 1",device=connstring)
 
-    execute_command_over_serial("log go")
+    execute_command_over_serial("log go",device=connstring)
 
         
 if __name__ == '__main__':
