@@ -10,9 +10,9 @@ import os
 import re
 import subprocess
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import IntEnum
 from time import sleep
 from typing import Optional
 
@@ -22,6 +22,14 @@ from nicegui import ui, app
 
 from register_sim import authenticate as emnify_authenticate_via_env
 from register_sim import get_sim_id_for_iccid, activate_sim as emnify_activate_sim_api
+
+USERS_FASTAPI_SCRIPTS = os.path.join(
+    os.path.expanduser("~"),
+    "git", "etoot", "lambda-functions", "users-fastapi", "lambda", "scripts",
+)
+CERT_OUTPUT_BASE = os.path.join(os.path.expanduser("~"), "Alon", "etoot", "mg100_certs")
+AMAZON_ROOT_CA1_REF = os.path.join(CERT_OUTPUT_BASE, "354616090640025", "AmazonRootCA1.pem")
+IOT_POLICY_NAME = "mg100"
 
 EMNIFY_API_BASE = "https://cdn.emnify.net/api/v1"
 
@@ -34,36 +42,8 @@ CERTS_TO_UPLOAD = [
 AWS_ENDPOINT = "a3t01gae6daupy-ats.iot.us-east-1.amazonaws.com"
 
 
-class Step(IntEnum):
-    WELCOME = 0
-    HARDWARE = 1
-    SIM_REPLACE = 2
-    EMNIFY_ACTIVATE = 3
-    FLASH_IMAGE_1 = 4
-    FLASH_IMAGE_2 = 5
-    UPLOAD_CERTS = 6
-    UPDATE_SENSORS = 7
-    VERIFY = 8
-    DONE = 9
-
-
-STEP_TITLES = {
-    Step.WELCOME: "Welcome",
-    Step.HARDWARE: "Hardware Setup",
-    Step.SIM_REPLACE: "SIM Replacement",
-    Step.EMNIFY_ACTIVATE: "EMnify SIM Activation",
-    Step.FLASH_IMAGE_1: "Flash Firmware Image 1",
-    Step.FLASH_IMAGE_2: "Flash Firmware Image 2",
-    Step.UPLOAD_CERTS: "Upload Certificates",
-    Step.UPDATE_SENSORS: "Update Sensors List",
-    Step.VERIFY: "Verify & Monitor",
-    Step.DONE: "Done",
-}
-
-
 @dataclass
 class WizardState:
-    current_step: int = Step.WELCOME
     gateway_id: str = ""
     serial_port: str = "/dev/ttyUSB0"
     image_path_1: str = ""
@@ -75,25 +55,24 @@ class WizardState:
     timeout: int = 20
     retries: int = 3
     conntype: str = "serial"
-    logs: list = field(default_factory=list)
     running: bool = False
-    completed_steps: set = field(default_factory=set)
 
 
 state = WizardState()
 
-log_area: Optional[ui.log] = None
+# Thread-safe log buffer: background threads append here, UI timer drains it
+_log_lines: list[str] = []
+_log_pending: deque[str] = deque()
+_log_lock = threading.Lock()
 
 
 def emit_log(msg: str):
+    """Append a log line. Safe to call from any thread."""
     ts = datetime.now().strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
-    state.logs.append(line)
-    if log_area is not None:
-        try:
-            log_area.push(line)
-        except (RuntimeError, Exception):
-            pass
+    with _log_lock:
+        _log_lines.append(line)
+        _log_pending.append(line)
 
 
 def get_serial_ports() -> list[str]:
@@ -109,10 +88,10 @@ def find_first_file_by_pattern(pattern: str, dir_path: str) -> Optional[str]:
 
 
 def run_cmd(cmd: list[str], label: str = "") -> tuple[int, str]:
-    """Run a subprocess, streaming output to the log panel.
+    """Run a subprocess, streaming output to the log buffer.
 
     Reads raw bytes in small chunks so that carriage-return based progress
-    bars (like mcumgr upload) are captured and forwarded to the log.
+    bars (like mcumgr upload) are captured.
     """
     emit_log(f"▶ {label or ' '.join(cmd)}")
     try:
@@ -127,7 +106,6 @@ def run_cmd(cmd: list[str], label: str = "") -> tuple[int, str]:
                 break
             buf += chunk.decode(errors="replace")
             while "\n" in buf or "\r" in buf:
-                # Split on whichever delimiter comes first
                 idx_n = buf.find("\n")
                 idx_r = buf.find("\r")
                 if idx_n == -1:
@@ -189,14 +167,9 @@ def extract_hash(output: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-#  EMnify helpers — reuses register_sim.py for auth / lookup / activation.
-#  Falls back to direct API calls when the env var is overridden by the UI.
+#  EMnify helpers
 # ---------------------------------------------------------------------------
 def emnify_authenticate(app_token: str) -> Optional[str]:
-    """Authenticate with EMnify.  If *app_token* is provided via the UI it
-    is injected into the environment so that register_sim.authenticate()
-    picks it up transparently.  Falls back to a direct API call if the
-    imported function fails (e.g. JSON decode on error responses)."""
     import requests
 
     emit_log("Authenticating with EMnify…")
@@ -210,7 +183,7 @@ def emnify_authenticate(app_token: str) -> Optional[str]:
             return token
         emit_log("✗ EMnify auth returned None — trying direct API call…")
     except Exception as e:
-        emit_log(f"✗ register_sim.authenticate() failed: {e} — trying direct API call…")
+        emit_log(f"✗ register_sim.authenticate() failed: {e} — trying direct…")
 
     effective_token = app_token or os.environ.get("EMNIFY_APPLICATION_TOKEN", "")
     if not effective_token:
@@ -238,7 +211,6 @@ def emnify_authenticate(app_token: str) -> Optional[str]:
 
 
 def emnify_find_sim(auth_token: str, iccid: str) -> Optional[int]:
-    """Return the numeric SIM id for the given ICCID using register_sim."""
     from register_sim import SimIdNotFoundException
 
     emit_log(f"Looking up SIM with ICCID {iccid}…")
@@ -296,128 +268,189 @@ def emnify_create_endpoint(auth_token: str, name: str, sim_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-#  Task runners (executed in background threads via asyncio)
+#  Task runners — all blocking work happens in threads; the UI polls the log
 # ---------------------------------------------------------------------------
-async def run_flash(image_path: str, label: str):
-    state.running = True
-    connstring = f"{state.serial_port},mtu=1024"
+def _run_flash_blocking(image_path: str, label: str):
+    connstring_mtu = f"{state.serial_port},mtu=1024"
+    connstring_raw = state.serial_port
     t, r, ct = str(state.timeout), str(state.retries), state.conntype
 
+    emit_log(f"── {label} ──")
+    serial_command("attr set commissioned 0", device=connstring_raw)
+    serial_command("log halt", device=connstring_raw)
+    sleep(3)
+
+    emit_log("Listing current images…")
+    run_cmd(
+        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "image", "list", "-t", "10000"],
+        "image list",
+    )
+
+    emit_log("Uploading image…")
+    run_cmd(
+        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "image", "upload", image_path],
+        "image upload",
+    )
+    sleep(5)
+
+    emit_log("Listing images after upload…")
+    _rc, output = run_cmd(
+        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "image", "list", "-t", "10000"],
+        "image list (post-upload)",
+    )
+    image_hash = extract_hash(output)
+    if not image_hash:
+        emit_log("✗ Could not extract image hash — aborting flash")
+        return
+
+    emit_log("Testing (switching) image…")
+    run_cmd(
+        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "image", "test", image_hash],
+        "image test",
+    )
+
+    emit_log("Resetting device…")
+    run_cmd(
+        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "reset"],
+        "reset",
+    )
+
+    emit_log("Waiting 105 s for device to boot with new image…")
+    for i in range(105):
+        sleep(1)
+        if i % 15 == 0:
+            emit_log(f"  …{105 - i}s remaining")
+
+    emit_log("Confirming image…")
+    run_cmd(
+        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "image", "confirm"],
+        "image confirm",
+    )
+    serial_command("attr set commissioned 1", device=connstring_raw)
+    emit_log(f"✓ {label} complete")
+
+
+def _create_certs_blocking() -> Optional[str]:
+    """Create AWS IoT Thing + certs using the same logic as
+    add_mg_100_gateway_thing.py.  Returns the output directory on success."""
+    import shutil
+
+    gw = state.gateway_id.strip()
+    if not gw:
+        emit_log("✗ Gateway ID is required to create certificates")
+        return None
+
+    thing_name = f"deviceId-{gw}"
+    output_dir = os.path.join(CERT_OUTPUT_BASE, gw)
+
+    emit_log(f"── Create AWS IoT Thing & Certificates ──")
+    emit_log(f"Thing name: {thing_name}")
+    emit_log(f"Output dir: {output_dir}")
+
     try:
-        emit_log(f"── {label} ──")
-        serial_command("attr set commissioned 0", device=state.serial_port)
-        serial_command("log halt", device=state.serial_port)
-        await asyncio.sleep(3)
+        import boto3
+    except ImportError:
+        emit_log("✗ boto3 is not installed — run: pip install boto3")
+        return None
 
-        emit_log("Listing current images…")
-        await asyncio.to_thread(
-            run_cmd,
-            ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring, "image", "list", "-t", "10000"],
-            "image list",
-        )
+    try:
+        iot_client = boto3.client("iot", region_name="us-east-1")
+        s3_client = boto3.client("s3", region_name="us-east-1")
 
-        emit_log("Uploading image…")
-        await asyncio.to_thread(
-            run_cmd,
-            ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring, "image", "upload", image_path],
-            "image upload",
-        )
-        await asyncio.sleep(5)
+        emit_log(f"Creating IoT Thing '{thing_name}'…")
+        iot_client.create_thing(thingName=thing_name)
+        emit_log(f"✓ Thing '{thing_name}' created")
 
-        emit_log("Listing images after upload…")
-        rc, output = await asyncio.to_thread(
-            run_cmd,
-            ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring, "image", "list", "-t", "10000"],
-            "image list (post-upload)",
-        )
-        image_hash = extract_hash(output)
-        if not image_hash:
-            emit_log("✗ Could not extract image hash — aborting flash")
-            return
+        emit_log("Creating keys and certificate…")
+        resp = iot_client.create_keys_and_certificate(setAsActive=True)
+        certificate_pem = resp["certificatePem"]
+        private_key = resp["keyPair"]["PrivateKey"]
+        certificate_arn = resp["certificateArn"]
+        certificate_id = resp["certificateId"]
+        emit_log(f"✓ Certificate created: {certificate_id[:16]}…")
 
-        emit_log("Testing (switching) image…")
-        await asyncio.to_thread(
-            run_cmd,
-            ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring, "image", "test", image_hash],
-            "image test",
-        )
+        emit_log("Attaching certificate to thing…")
+        iot_client.attach_thing_principal(thingName=thing_name, principal=certificate_arn)
+        emit_log("✓ Certificate attached")
 
-        emit_log("Resetting device…")
-        await asyncio.to_thread(
-            run_cmd,
-            ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring, "reset"],
-            "reset",
-        )
+        emit_log(f"Attaching policy '{IOT_POLICY_NAME}'…")
+        iot_client.attach_policy(policyName=IOT_POLICY_NAME, target=certificate_arn)
+        emit_log(f"✓ Policy '{IOT_POLICY_NAME}' attached")
 
-        emit_log("Waiting 105 s for device to boot with new image…")
-        for i in range(105):
-            await asyncio.sleep(1)
-            if i % 15 == 0:
-                emit_log(f"  …{105 - i}s remaining")
+        bucket_name = "etoot-devices"
+        cert_s3_key = f"certificates/mg100/{thing_name}/{thing_name}-certificate.pem.crt"
+        key_s3_key = f"certificates/mg100/{thing_name}/{thing_name}-private.pem.key"
+        emit_log(f"Uploading to S3 bucket '{bucket_name}'…")
+        s3_client.put_object(Bucket=bucket_name, Key=cert_s3_key, Body=certificate_pem)
+        s3_client.put_object(Bucket=bucket_name, Key=key_s3_key, Body=private_key)
+        emit_log("✓ Uploaded to S3")
 
-        emit_log("Confirming image…")
-        await asyncio.to_thread(
-            run_cmd,
-            ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring, "image", "confirm"],
-            "image confirm",
-        )
-        serial_command("attr set commissioned 1", device=state.serial_port)
-        emit_log(f"✓ {label} complete")
-    finally:
-        state.running = False
+        os.makedirs(output_dir, exist_ok=True)
+        cert_path = os.path.join(output_dir, f"{thing_name}-certificate.pem.crt")
+        key_path = os.path.join(output_dir, f"{thing_name}-private.pem.key")
+        with open(cert_path, "w") as f:
+            f.write(certificate_pem)
+        with open(key_path, "w") as f:
+            f.write(private_key)
+        emit_log(f"✓ Saved cert → {cert_path}")
+        emit_log(f"✓ Saved key  → {key_path}")
+
+        if os.path.isfile(AMAZON_ROOT_CA1_REF):
+            shutil.copy(AMAZON_ROOT_CA1_REF, output_dir)
+            emit_log(f"✓ Copied AmazonRootCA1.pem → {output_dir}")
+        else:
+            emit_log(f"⚠ AmazonRootCA1.pem not found at {AMAZON_ROOT_CA1_REF} — copy it manually")
+
+        emit_log(f"✓ Certificates ready in {output_dir}")
+        return output_dir
+
+    except Exception as e:
+        emit_log(f"✗ Certificate creation failed: {e}")
+        return None
 
 
-async def run_cert_upload():
-    state.running = True
-    connstring = f"{state.serial_port},mtu=1024"
+def _run_cert_upload_blocking():
+    connstring_mtu = f"{state.serial_port},mtu=1024"
+    connstring_raw = state.serial_port
     t, r, ct = str(state.timeout), str(state.retries), state.conntype
 
-    try:
-        emit_log("── Certificate Upload ──")
-        serial_command("log halt", device=state.serial_port)
-        serial_command("attr set commissioned 0", device=state.serial_port)
+    emit_log("── Certificate Upload ──")
+    serial_command("log halt", device=connstring_raw)
+    serial_command("attr set commissioned 0", device=connstring_raw)
 
-        for file_pattern, dest_path in CERTS_TO_UPLOAD:
-            abs_path = find_first_file_by_pattern(file_pattern, state.cert_folder)
-            if not abs_path:
-                emit_log(f"✗ File matching '{file_pattern}' not found in {state.cert_folder}")
-                continue
-            await asyncio.to_thread(
-                run_cmd,
-                ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring, "fs", "upload", abs_path, dest_path],
-                f"upload {os.path.basename(abs_path)} → {dest_path}",
-            )
-            await asyncio.sleep(3)
+    for file_pattern, dest_path in CERTS_TO_UPLOAD:
+        abs_path = find_first_file_by_pattern(file_pattern, state.cert_folder)
+        if not abs_path:
+            emit_log(f"✗ File matching '{file_pattern}' not found in {state.cert_folder}")
+            continue
+        run_cmd(
+            ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "fs", "upload", abs_path, dest_path],
+            f"upload {os.path.basename(abs_path)} → {dest_path}",
+        )
+        sleep(3)
 
-        serial_command(f"attr set endpoint {AWS_ENDPOINT}", device=state.serial_port)
-        serial_command("attr set commissioned 1", device=state.serial_port)
-        serial_command("log go", device=state.serial_port)
-        emit_log("✓ Certificate upload complete")
-    finally:
-        state.running = False
+    serial_command(f"attr set endpoint {AWS_ENDPOINT}", device=connstring_raw)
+    serial_command("attr set commissioned 1", device=connstring_raw)
+    serial_command("log go", device=connstring_raw)
+    emit_log("✓ Certificate upload complete")
 
 
-async def run_emnify_activation():
-    state.running = True
-    try:
-        emit_log("── EMnify SIM Activation ──")
-        auth = emnify_authenticate(state.emnify_token)
-        if not auth:
-            return
+def _run_emnify_blocking():
+    emit_log("── EMnify SIM Activation ──")
+    auth = emnify_authenticate(state.emnify_token)
+    if not auth:
+        return
 
-        sim_id = emnify_find_sim(auth, state.sim_iccid)
-        if sim_id is None:
-            return
+    sim_id = emnify_find_sim(auth, state.sim_iccid)
+    if sim_id is None:
+        return
 
-        emnify_activate_sim(auth, sim_id)
+    emnify_activate_sim(auth, sim_id)
 
-        gw_name = state.gateway_id
-        if gw_name:
-            emnify_create_endpoint(auth, gw_name, sim_id)
+    if state.gateway_id:
+        emnify_create_endpoint(auth, state.gateway_id, sim_id)
 
-        emit_log("✓ EMnify step complete")
-    finally:
-        state.running = False
+    emit_log("✓ EMnify step complete")
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +470,7 @@ def _serial_monitor_thread():
         emit_log(f"Monitor error: {e}")
 
 
-async def start_serial_monitor():
+def start_serial_monitor():
     _monitor_stop.clear()
     t = threading.Thread(target=_serial_monitor_thread, daemon=True)
     t.start()
@@ -450,12 +483,21 @@ def stop_serial_monitor():
 
 
 # ---------------------------------------------------------------------------
+#  Async wrappers that run blocking work in a thread
+# ---------------------------------------------------------------------------
+async def _run_in_thread(fn, *args):
+    state.running = True
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, fn, *args)
+    finally:
+        state.running = False
+
+
+# ---------------------------------------------------------------------------
 #  UI
 # ---------------------------------------------------------------------------
 @ui.page("/")
 def index():
-    global log_area
-
     ui.colors(primary="#1976D2", secondary="#424242", accent="#82B1FF")
 
     with ui.header().classes("items-center justify-between bg-primary text-white"):
@@ -479,19 +521,34 @@ def index():
         with splitter.after:
             with ui.column().classes("w-full h-full p-2 gap-0"):
                 ui.label("Log Output").classes("text-h6 text-grey-8 mb-1")
-                log_area = ui.log(max_lines=2000).classes("w-full flex-grow font-mono text-xs bg-grey-10 text-green-4 rounded")
-                for prev_line in state.logs:
-                    log_area.push(prev_line)
-                la = log_area
+                log_widget = ui.log(max_lines=2000).classes(
+                    "w-full flex-grow font-mono text-xs bg-grey-10 text-green-4 rounded"
+                )
+                # Replay any lines already in the buffer (e.g. after page refresh)
+                with _log_lock:
+                    for line in _log_lines:
+                        log_widget.push(line)
+
+                # Timer drains pending log lines into this client's widget
+                def _drain_logs():
+                    with _log_lock:
+                        while _log_pending:
+                            log_widget.push(_log_pending.popleft())
+
+                ui.timer(0.3, _drain_logs)
+
                 with ui.row().classes("w-full mt-1 gap-2"):
-                    ui.button("Clear", icon="delete_sweep", on_click=lambda: la.clear()).props("flat dense color=grey")
-                    ui.button("Copy", icon="content_copy", on_click=lambda: ui.run_javascript(
-                        f"navigator.clipboard.writeText({repr(chr(10).join(state.logs))})"
-                    )).props("flat dense color=grey")
+                    ui.button("Clear", icon="delete_sweep", on_click=lambda: log_widget.clear()).props("flat dense color=grey")
+
+                    def _copy():
+                        with _log_lock:
+                            text = "\n".join(_log_lines)
+                        ui.run_javascript(f"navigator.clipboard.writeText({text!r})")
+
+                    ui.button("Copy", icon="content_copy", on_click=_copy).props("flat dense color=grey")
 
 
 def _nav_buttons(stepper, on_next=None, next_label="Next", show_run=False, run_label="Run", run_handler=None):
-    """Reusable navigation row with Back / Next / Run."""
     with ui.stepper_navigation():
         ui.button("Back", on_click=stepper.previous).props("flat")
         if show_run and run_handler:
@@ -546,14 +603,13 @@ def _build_step_hardware(stepper):
 
 Please complete the following before proceeding:
 """)
-        checks = {}
         for label in [
             "Gateway is powered on",
             "USB cable connected between gateway and this PC",
             "Serial port detected (check dropdown on previous page)",
             "Gateway ID (IMEI) noted from device label",
         ]:
-            checks[label] = ui.checkbox(label)
+            ui.checkbox(label)
 
         ui.separator()
         ui.markdown("> **Tip:** Run `dmesg | tail` to verify the USB device appeared.")
@@ -619,7 +675,7 @@ The wizard will:
             if not state.sim_iccid:
                 ui.notify("Please enter the SIM ICCID", type="warning")
                 return
-            await run_emnify_activation()
+            await _run_in_thread(_run_emnify_blocking)
             ui.notify("EMnify activation complete", type="positive")
 
         _nav_buttons(stepper, show_run=True, run_label="Activate SIM", run_handler=_run)
@@ -649,11 +705,11 @@ This is typically the latest release candidate.
             path = os.path.expanduser(path)
             emit_log(f"Checking image path: '{path}'")
             if not path or not os.path.isfile(path):
-                emit_log(f"✗ File not found: '{path}'  (exists={os.path.exists(path)}, isfile={os.path.isfile(path) if os.path.exists(path) else 'N/A'})")
+                emit_log(f"✗ File not found: '{path}'")
                 ui.notify(f"Invalid image path: {path}", type="negative")
                 return
             state.image_path_1 = path
-            await run_flash(path, "Flash Image 1")
+            await _run_in_thread(_run_flash_blocking, path, "Flash Image 1")
             ui.notify("Flash image 1 complete", type="positive")
 
         _nav_buttons(stepper, show_run=True, run_label="Flash Image 1", run_handler=_run)
@@ -681,40 +737,62 @@ This step is optional — skip if only one image is needed.
                 ui.notify(f"Invalid image path: {path}", type="negative")
                 return
             state.image_path_2 = path
-            await run_flash(path, "Flash Image 2")
+            await _run_in_thread(_run_flash_blocking, path, "Flash Image 2")
             ui.notify("Flash image 2 complete", type="positive")
 
         _nav_buttons(stepper, show_run=True, run_label="Flash Image 2", run_handler=_run)
 
 
 def _build_step_certs(stepper):
-    with ui.step("Upload Certificates"):
+    with ui.step("Certificates"):
         ui.markdown("""
-### Upload AWS IoT Certificates
+### Create & Upload AWS IoT Certificates
 
-Point to the folder containing:
-- `AmazonRootCA1.pem`
-- `*-certificate.pem.crt`
-- `*-private.pem.key`
+**Option A** — Create new certificates automatically:
+- Creates an AWS IoT Thing (`deviceId-<Gateway ID>`)
+- Generates certificate + private key
+- Attaches the `mg100` policy
+- Uploads to S3 and saves locally
+- Then uploads all certs to the device via mcumgr
 
-These are typically generated by `add_mg_100_gateway_thing.py` in the users-fastapi repo
-and placed in a folder named after the Gateway ID.
+**Option B** — Use an existing certificate folder (if already created).
+
+> Requires valid AWS credentials (`aws configure` or env vars).
 """)
-        ui.input(
-            "Certificate folder",
-            placeholder=f"~/Alon/etoot/mg100_certs/{state.gateway_id or '<GATEWAY_ID>'}",
+        cert_input = ui.input(
+            "Certificate folder (auto-filled on create, or enter manually)",
+            placeholder=f"~/Alon/etoot/mg100_certs/<GATEWAY_ID>",
         ).classes("w-full").bind_value(state, "cert_folder")
 
-        async def _run():
-            folder = os.path.expanduser(state.cert_folder)
+        async def _create_and_upload():
+            if not state.gateway_id.strip():
+                ui.notify("Gateway ID is required", type="warning")
+                return
+
+            def _do_all():
+                out = _create_certs_blocking()
+                if out:
+                    state.cert_folder = out
+                    _run_cert_upload_blocking()
+
+            await _run_in_thread(_do_all)
+            cert_input.value = state.cert_folder
+            ui.notify("Certificates created & uploaded", type="positive")
+
+        async def _upload_existing():
+            folder = os.path.expanduser(state.cert_folder.strip())
             if not os.path.isdir(folder):
                 ui.notify("Certificate folder not found", type="negative")
                 return
             state.cert_folder = folder
-            await run_cert_upload()
+            await _run_in_thread(_run_cert_upload_blocking)
             ui.notify("Certificates uploaded", type="positive")
 
-        _nav_buttons(stepper, show_run=True, run_label="Upload Certs", run_handler=_run)
+        with ui.stepper_navigation():
+            ui.button("Back", on_click=stepper.previous).props("flat")
+            ui.button("Create & Upload", icon="add_circle", on_click=_create_and_upload).props("color=positive")
+            ui.button("Upload Existing", icon="upload_file", on_click=_upload_existing).props("color=accent outlined")
+            ui.button("Next", on_click=stepper.next).props("color=primary")
 
 
 def _build_step_sensors(stepper):
@@ -765,7 +843,7 @@ and connecting to AWS IoT.
 def _build_step_done(stepper):
     with ui.step("Done"):
         ui.markdown("""
-### Configuration Complete! 🎉
+### Configuration Complete!
 
 **Post-installation checklist:**
 - [ ] Upload PEM files to shared Drive
