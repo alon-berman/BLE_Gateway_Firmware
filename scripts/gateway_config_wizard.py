@@ -176,19 +176,14 @@ def emnify_authenticate(app_token: str) -> Optional[str]:
     if app_token:
         os.environ["EMNIFY_APPLICATION_TOKEN"] = app_token
 
-    try:
-        token = emnify_authenticate_via_env()
-        if token:
-            emit_log("✓ EMnify authentication successful")
-            return token
-        emit_log("✗ EMnify auth returned None — trying direct API call…")
-    except Exception as e:
-        emit_log(f"✗ register_sim.authenticate() failed: {e} — trying direct…")
-
     effective_token = app_token or os.environ.get("EMNIFY_APPLICATION_TOKEN", "")
     if not effective_token:
         emit_log("✗ No application token available")
         return None
+
+    token_preview = effective_token[:8] + "…" if len(effective_token) > 8 else effective_token
+    emit_log(f"  Token starts with: {token_preview}  (len={len(effective_token)})")
+
     try:
         resp = requests.post(
             f"{EMNIFY_API_BASE}/authenticate",
@@ -237,34 +232,88 @@ def emnify_activate_sim(auth_token: str, sim_id: int) -> bool:
         return False
 
 
-def emnify_create_endpoint(auth_token: str, name: str, sim_id: int) -> bool:
+def _emnify_get_first_profile(auth_token: str, profile_type: str) -> Optional[int]:
+    """Fetch the first available service_profile or tariff_profile id."""
     import requests
 
-    emit_log(f"Creating EMnify endpoint '{name}' with SIM {sim_id}…")
     try:
-        resp = requests.post(
-            f"{EMNIFY_API_BASE}/endpoint",
-            headers={
-                "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "name": name,
-                "sim": {"id": sim_id, "activate": True},
-                "service_profile": {"id": 1},
-                "tariff_profile": {"id": 1},
-                "status": {"id": 0},
-            },
+        resp = requests.get(
+            f"{EMNIFY_API_BASE}/{profile_type}",
+            headers={"Authorization": f"Bearer {auth_token}"},
             timeout=15,
         )
-        if resp.status_code in (200, 201):
-            emit_log(f"✓ Endpoint '{name}' created")
-            return True
-        emit_log(f"✗ Endpoint creation returned {resp.status_code}: {resp.text}")
-        return False
+        if resp.status_code == 200:
+            profiles = resp.json()
+            if profiles:
+                pid = profiles[0]["id"]
+                emit_log(f"  Using {profile_type} id={pid} ({profiles[0].get('name', '?')})")
+                return pid
+        emit_log(f"⚠ Could not list {profile_type}: {resp.status_code}")
     except Exception as e:
-        emit_log(f"✗ Endpoint creation failed: {e}")
-        return False
+        emit_log(f"⚠ Error listing {profile_type}: {e}")
+    return None
+
+
+def emnify_create_device(auth_token: str, name: str, sim_id: int, imei: str = "") -> Optional[int]:
+    """Create an EMnify device (endpoint), assign + activate the SIM, and
+    enable the device.  Returns the endpoint id on success."""
+    import requests
+
+    headers = {
+        "Authorization": f"Bearer {auth_token}",
+        "Content-Type": "application/json",
+    }
+
+    emit_log(f"Creating EMnify device '{name}' with SIM {sim_id}…")
+
+    sp_id = _emnify_get_first_profile(auth_token, "service_profile")
+    tp_id = _emnify_get_first_profile(auth_token, "tariff_profile")
+    if not sp_id or not tp_id:
+        emit_log("✗ Cannot create device without valid service/tariff profiles")
+        return None
+
+    try:
+        payload = {
+            "name": name,
+            "service_profile": {"id": sp_id},
+            "tariff_profile": {"id": tp_id},
+            "status": {"id": 0},  # 0 = Enabled
+            "sim": {"id": sim_id, "activate": True},
+        }
+        if imei:
+            payload["imei"] = imei
+            payload["imei_lock"] = True
+
+        resp = requests.post(
+            f"{EMNIFY_API_BASE}/endpoint",
+            headers=headers,
+            json=payload,
+            timeout=15,
+        )
+        if resp.status_code not in (200, 201):
+            emit_log(f"✗ Device creation returned {resp.status_code}: {resp.text}")
+            return None
+
+        endpoint_id = resp.json().get("id")
+        emit_log(f"✓ Device '{name}' created (endpoint id={endpoint_id})")
+
+        emit_log(f"Enabling device endpoint {endpoint_id}…")
+        resp = requests.patch(
+            f"{EMNIFY_API_BASE}/endpoint/{endpoint_id}",
+            headers=headers,
+            json={"status": {"id": 0}},
+            timeout=15,
+        )
+        if resp.status_code in (200, 204):
+            emit_log("✓ Device enabled")
+        else:
+            emit_log(f"⚠ Enable returned {resp.status_code}: {resp.text}")
+
+        return endpoint_id
+
+    except Exception as e:
+        emit_log(f"✗ Device creation failed: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -410,9 +459,10 @@ def _create_certs_blocking() -> Optional[str]:
 
 
 def _run_cert_upload_blocking():
-    connstring_mtu = f"{state.serial_port},mtu=1024"
+    # fs upload uses raw connstring (no mtu) — matches mcumgr_certificate_upload.py
     connstring_raw = state.serial_port
     t, r, ct = str(state.timeout), str(state.retries), state.conntype
+    connstring_mtu = f"{connstring_raw},mtu=1024"
 
     emit_log("── Certificate Upload ──")
     serial_command("log halt", device=connstring_raw)
@@ -424,7 +474,7 @@ def _run_cert_upload_blocking():
             emit_log(f"✗ File matching '{file_pattern}' not found in {state.cert_folder}")
             continue
         run_cmd(
-            ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "fs", "upload", abs_path, dest_path],
+            ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_raw, "fs", "upload", abs_path, dest_path],
             f"upload {os.path.basename(abs_path)} → {dest_path}",
         )
         sleep(3)
@@ -432,7 +482,18 @@ def _run_cert_upload_blocking():
     serial_command(f"attr set endpoint {AWS_ENDPOINT}", device=connstring_raw)
     serial_command("attr set commissioned 1", device=connstring_raw)
     serial_command("log go", device=connstring_raw)
-    emit_log("✓ Certificate upload complete")
+
+    emit_log("Resetting device to apply new certificates…")
+    run_cmd(
+        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "reset"],
+        "reset after cert upload",
+    )
+    emit_log("Waiting 30 s for device to reboot…")
+    for i in range(30):
+        sleep(1)
+        if i % 10 == 0:
+            emit_log(f"  …{30 - i}s remaining")
+    emit_log("✓ Certificate upload complete — device should now connect")
 
 
 def _run_emnify_blocking():
@@ -447,8 +508,9 @@ def _run_emnify_blocking():
 
     emnify_activate_sim(auth, sim_id)
 
-    if state.gateway_id:
-        emnify_create_endpoint(auth, state.gateway_id, sim_id)
+    gw = state.gateway_id.strip()
+    if gw:
+        emnify_create_device(auth, gw, sim_id, imei=gw)
 
     emit_log("✓ EMnify step complete")
 
