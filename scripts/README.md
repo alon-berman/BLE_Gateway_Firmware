@@ -7,3 +7,8 @@
 # BLE Gateway Firmware
 
 Documentation for the BLE Gateway Firmware is [HERE!](https://lairdcp.github.io/guides/ble-gateway-firmware/1.0/Introduction.html)
+
+
+# List images command
+
+`(.venv) bermanalon@pop-os:~/git/etoot-gw-fw/ble_gateway_firmware/scripts$ mcumgr image list --conntype serial --connstring /dev/ttyUSB0 -t 20 -r 3 `
