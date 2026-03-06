@@ -105,6 +105,7 @@ void bluegrass_disconnected_callback(void)
 {
 	lcz_led_turn_off(CLOUD_LED);
 
+	bg.init_shadow = true;
 	bg.gateway_subscribed = false;
 	bg.subscribed_to_get_accepted = false;
 	bg.get_shadow_processed = false;

@@ -457,6 +457,7 @@ void SensorTable_UnsubscribeAll(void)
 	for (i = 0; i < CONFIG_SENSOR_TABLE_SIZE; i++) {
 		sensorTable[i].subscribed = false;
 		sensorTable[i].getAcceptedSubscribed = false;
+		sensorTable[i].shadowInitReceived = false;
 	}
 }
 

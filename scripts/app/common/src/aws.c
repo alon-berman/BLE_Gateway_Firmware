@@ -680,6 +680,8 @@ static int subscription_handler(struct mqtt_client *const client,
 	/* Leave room for null to allow easy printing */
 	size_t size = length + 1;
 	if (size > CONFIG_SHADOW_IN_MAX_SIZE) {
+		AWS_LOG_ERR("Shadow payload too large (%u > %u), dropping",
+			    size, CONFIG_SHADOW_IN_MAX_SIZE);
 		return 0;
 	}
 
