@@ -1,0 +1,1 @@
+burn: python3 mcumgr_flash.py --image_path etoot_mg100_gw_fw_1.2.0-rc2/build/mg100/aws/zephyr/app_update.bin
