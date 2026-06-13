@@ -55,7 +55,7 @@ def read_from_serial_device(port, baudrate=115200, timeout=1):
         read_from_serial_device(port, baudrate, timeout) # retry
         
         
-def main(image_path, timeout, retries, conntype, connstring, set_commission: bool = True):
+def main(image_path, timeout, retries, conntype, connstring, set_commission: bool = True, no_monitor: bool = False):
     execute_command_over_serial("attr set commissioned 0", device=connstring)
     execute_command_over_serial("log halt", device=connstring)
     sleep(3)
@@ -84,6 +84,10 @@ def main(image_path, timeout, retries, conntype, connstring, set_commission: boo
         print("setting commision to 1")
         execute_command_over_serial("attr set commissioned 1", device=connstring)
 
+    if no_monitor:
+        print("--no_monitor set; skipping post-flash serial read loop")
+        return
+
     read_from_serial_device(port=connstring, baudrate=115200, timeout=3)
 
 
@@ -103,6 +107,8 @@ if __name__ == '__main__':
     parser.add_argument('--set_commission', type=bool,
                         help='should set comission flag of device to true after flashing.',
                         default=True)
+    parser.add_argument('--no_monitor', action='store_true',
+                        help='skip the post-flash infinite serial read loop (useful when called from a wrapper).')
 
     args = parser.parse_args()
     main(**args.__dict__)

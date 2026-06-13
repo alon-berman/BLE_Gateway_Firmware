@@ -1,0 +1,5 @@
+nicegui>=1.4
+pyserial>=3.5
+requests>=2.31
+boto3>=1.34
+tqdm>=4.66

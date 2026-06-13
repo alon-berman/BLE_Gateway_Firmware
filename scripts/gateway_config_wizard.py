@@ -6,15 +6,21 @@ mcumgr_certificate_upload.py logic and adds EMnify SIM activation.
 """
 
 import asyncio
+import json
 import os
 import re
 import subprocess
 import threading
+import zipfile
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from time import sleep
 from typing import Optional
+
+# All AWS access (IoT, S3, Secrets Manager) must use the `etoot` profile.
+# Set before any boto3 client is constructed so sessions pick it up automatically.
+os.environ.setdefault("AWS_PROFILE", "default")
 
 import serial
 import serial.tools.list_ports
@@ -22,6 +28,9 @@ from nicegui import ui, app
 
 from register_sim import authenticate as emnify_authenticate_via_env
 from register_sim import get_sim_id_for_iccid, activate_sim as emnify_activate_sim_api
+
+AWS_REGION = "us-east-1"
+EMNIFY_SECRET_NAME = os.environ.get("EMNIFY_SECRET_NAME", "EmnifyAPIKey")
 
 USERS_FASTAPI_SCRIPTS = os.path.join(
     os.path.expanduser("~"),
@@ -41,11 +50,19 @@ CERTS_TO_UPLOAD = [
 
 AWS_ENDPOINT = "a3t01gae6daupy-ats.iot.us-east-1.amazonaws.com"
 
+FIRMWARE_S3_BUCKET = "etoot-devices"
+FIRMWARE_S3_PREFIX = "firmware/mg100/"
+FIRMWARE_DOWNLOAD_DIR = "/tmp/etoot_firmware"
+# Path inside each extracted zip where mcumgr-flashable bin lives.
+FIRMWARE_BIN_RELPATH = os.path.join("build", "mg100", "aws", "zephyr", "app_update.bin")
+
 
 @dataclass
 class WizardState:
     gateway_id: str = ""
     serial_port: str = "/dev/ttyUSB0"
+    image_s3_key_1: str = ""
+    image_s3_key_2: str = ""
     image_path_1: str = ""
     image_path_2: str = ""
     cert_folder: str = ""
@@ -169,6 +186,27 @@ def extract_hash(output: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 #  EMnify helpers
 # ---------------------------------------------------------------------------
+def fetch_emnify_token_from_secrets_manager() -> Optional[str]:
+    """Pull the EMnify application token from AWS Secrets Manager
+    (secret `EmnifyAPIKey`, JSON field `API_KEY`).  Returns None on any
+    failure — the UI will fall back to manual entry.
+    """
+    try:
+        import boto3
+    except ImportError:
+        emit_log("✗ boto3 not installed — cannot read EMnify secret automatically")
+        return None
+    try:
+        client = boto3.client("secretsmanager", region_name=AWS_REGION)
+        resp = client.get_secret_value(SecretId=EMNIFY_SECRET_NAME)
+        token = json.loads(resp["SecretString"])["API_KEY"]
+        emit_log(f"✓ Loaded EMnify token from Secrets Manager ({EMNIFY_SECRET_NAME})")
+        return token
+    except Exception as e:
+        emit_log(f"⚠ Could not load EMnify token from Secrets Manager: {e}")
+        return None
+
+
 def emnify_authenticate(app_token: str) -> Optional[str]:
     import requests
 
@@ -317,66 +355,154 @@ def emnify_create_device(auth_token: str, name: str, sim_id: int, imei: str = ""
 
 
 # ---------------------------------------------------------------------------
+#  Firmware artifact helpers — list zips in S3, download + extract on demand
+# ---------------------------------------------------------------------------
+def list_firmware_zips() -> list[str]:
+    """Return S3 keys for firmware zips under FIRMWARE_S3_PREFIX, newest first."""
+    try:
+        import boto3
+    except ImportError:
+        emit_log("✗ boto3 not installed — cannot list firmware from S3")
+        return []
+    try:
+        s3 = boto3.client("s3", region_name=AWS_REGION)
+        resp = s3.list_objects_v2(Bucket=FIRMWARE_S3_BUCKET, Prefix=FIRMWARE_S3_PREFIX)
+        items = [
+            (o["Key"], o["LastModified"])
+            for o in resp.get("Contents", [])
+            if o["Key"].endswith(".zip")
+        ]
+        items.sort(key=lambda x: x[1], reverse=True)
+        return [k for k, _ in items]
+    except Exception as e:
+        emit_log(f"✗ Could not list firmware in s3://{FIRMWARE_S3_BUCKET}/{FIRMWARE_S3_PREFIX}: {e}")
+        return []
+
+
+def download_and_extract_firmware(s3_key: str) -> Optional[str]:
+    """Download s3_key to FIRMWARE_DOWNLOAD_DIR, extract, return absolute path
+    to app_update.bin.  Re-uses existing extraction if already present."""
+    try:
+        import boto3
+    except ImportError:
+        emit_log("✗ boto3 not installed — cannot fetch firmware from S3")
+        return None
+
+    basename = os.path.basename(s3_key)
+    name_no_ext = basename[:-4] if basename.endswith(".zip") else basename
+    os.makedirs(FIRMWARE_DOWNLOAD_DIR, exist_ok=True)
+    zip_path = os.path.join(FIRMWARE_DOWNLOAD_DIR, basename)
+    extract_dir = os.path.join(FIRMWARE_DOWNLOAD_DIR, name_no_ext)
+    bin_path = os.path.join(extract_dir, FIRMWARE_BIN_RELPATH)
+
+    if os.path.isfile(bin_path):
+        emit_log(f"✓ Firmware already extracted: {bin_path}")
+        return bin_path
+
+    try:
+        s3 = boto3.client("s3", region_name=AWS_REGION)
+        emit_log(f"Downloading s3://{FIRMWARE_S3_BUCKET}/{s3_key} → {zip_path}")
+        s3.download_file(FIRMWARE_S3_BUCKET, s3_key, zip_path)
+        emit_log(f"✓ Downloaded {os.path.getsize(zip_path) // (1024*1024)} MB")
+
+        emit_log(f"Extracting to {extract_dir}…")
+        os.makedirs(extract_dir, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(extract_dir)
+
+        if not os.path.isfile(bin_path):
+            # Fall back: search the extracted tree for the bin
+            for root, _dirs, files in os.walk(extract_dir):
+                if "app_update.bin" in files:
+                    bin_path = os.path.join(root, "app_update.bin")
+                    emit_log(f"  (found bin at non-default path: {bin_path})")
+                    break
+            else:
+                emit_log(f"✗ app_update.bin not found in extracted zip")
+                return None
+
+        emit_log(f"✓ Firmware ready: {bin_path}")
+        return bin_path
+    except Exception as e:
+        emit_log(f"✗ Firmware download/extract failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 #  Task runners — all blocking work happens in threads; the UI polls the log
 # ---------------------------------------------------------------------------
 def _run_flash_blocking(image_path: str, label: str):
-    connstring_mtu = f"{state.serial_port},mtu=1024"
-    connstring_raw = state.serial_port
-    t, r, ct = str(state.timeout), str(state.retries), state.conntype
+    """Delegate the full flash sequence to the working mcumgr_flash.py.
+
+    Casts retries/timeout to int because ui.number binds them as floats,
+    and mcumgr's -r flag rejects "1.0".
+    """
+    scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    script_path = os.path.join(scripts_dir, "mcumgr_flash.py")
 
     emit_log(f"── {label} ──")
-    serial_command("attr set commissioned 0", device=connstring_raw)
-    serial_command("log halt", device=connstring_raw)
-    sleep(3)
+    emit_log(f"Delegating to {script_path}")
+    emit_log(f"  image_path = {image_path}")
+    emit_log(f"  connstring = {state.serial_port}  conntype = {state.conntype}")
+    emit_log(f"  timeout = {int(state.timeout)}s  retries = {int(state.retries)}")
 
-    emit_log("Listing current images…")
-    run_cmd(
-        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "image", "list", "-t", "10000"],
-        "image list",
-    )
+    cmd = [
+        "python3", "-u", script_path,
+        "--image_path", image_path,
+        "--connstring", state.serial_port,
+        "--conntype", state.conntype,
+        "--timeout", str(int(state.timeout)),
+        "--retries", str(int(state.retries)),
+        "--no_monitor",
+    ]
+    rc, _ = _run_cmd_in_dir(cmd, scripts_dir, f"mcumgr_flash.py ({label})")
+    if rc == 0:
+        emit_log(f"✓ {label} complete")
+    else:
+        emit_log(f"✗ {label} failed (exit code {rc})")
 
-    emit_log("Uploading image…")
-    run_cmd(
-        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "image", "upload", image_path],
-        "image upload",
-    )
-    sleep(5)
 
-    emit_log("Listing images after upload…")
-    _rc, output = run_cmd(
-        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "image", "list", "-t", "10000"],
-        "image list (post-upload)",
-    )
-    image_hash = extract_hash(output)
-    if not image_hash:
-        emit_log("✗ Could not extract image hash — aborting flash")
-        return
-
-    emit_log("Testing (switching) image…")
-    run_cmd(
-        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "image", "test", image_hash],
-        "image test",
-    )
-
-    emit_log("Resetting device…")
-    run_cmd(
-        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "reset"],
-        "reset",
-    )
-
-    emit_log("Waiting 105 s for device to boot with new image…")
-    for i in range(105):
-        sleep(1)
-        if i % 15 == 0:
-            emit_log(f"  …{105 - i}s remaining")
-
-    emit_log("Confirming image…")
-    run_cmd(
-        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "image", "confirm"],
-        "image confirm",
-    )
-    serial_command("attr set commissioned 1", device=connstring_raw)
-    emit_log(f"✓ {label} complete")
+def _run_cmd_in_dir(cmd: list[str], cwd: str, label: str = "") -> tuple[int, str]:
+    """Like run_cmd, but executes in `cwd` so relative imports in mcumgr_flash.py work."""
+    emit_log(f"▶ {label or ' '.join(cmd)}  (cwd={cwd})")
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+        output_lines: list[str] = []
+        buf = ""
+        while True:
+            chunk = proc.stdout.read(256)
+            if not chunk:
+                break
+            buf += chunk.decode(errors="replace")
+            while "\n" in buf or "\r" in buf:
+                idx_n = buf.find("\n")
+                idx_r = buf.find("\r")
+                if idx_n == -1:
+                    idx = idx_r
+                elif idx_r == -1:
+                    idx = idx_n
+                else:
+                    idx = min(idx_n, idx_r)
+                segment = buf[:idx].rstrip()
+                buf = buf[idx + 1:]
+                if segment:
+                    emit_log(segment)
+                    output_lines.append(segment)
+        remainder = buf.strip()
+        if remainder:
+            emit_log(remainder)
+            output_lines.append(remainder)
+        proc.wait()
+        emit_log(f"✓ Exit code: {proc.returncode}")
+        return proc.returncode, "\n".join(output_lines)
+    except FileNotFoundError as e:
+        emit_log(f"✗ Command not found: {e}")
+        return -1, ""
+    except Exception as e:
+        emit_log(f"✗ Error: {e}")
+        return -1, str(e)
 
 
 def _create_certs_blocking() -> Optional[str]:
@@ -461,7 +587,8 @@ def _create_certs_blocking() -> Optional[str]:
 def _run_cert_upload_blocking():
     # fs upload uses raw connstring (no mtu) — matches mcumgr_certificate_upload.py
     connstring_raw = state.serial_port
-    t, r, ct = str(state.timeout), str(state.retries), state.conntype
+    # int() casts because ui.number binds floats; mcumgr rejects "1.0" for -r.
+    t, r, ct = str(int(state.timeout)), str(int(state.retries)), state.conntype
     connstring_mtu = f"{connstring_raw},mtu=1024"
 
     emit_log("── Certificate Upload ──")
@@ -623,7 +750,7 @@ def _nav_buttons(stepper, on_next=None, next_label="Next", show_run=False, run_l
 
 def _build_step_welcome(stepper):
     with ui.step("Welcome"):
-        ui.markdown("""
+        ui.markdown(f"""
 ### Welcome to the MG100 Gateway Configuration Wizard
 
 This wizard will walk you through the **complete bringup process** for a new gateway:
@@ -637,6 +764,7 @@ This wizard will walk you through the **complete bringup process** for a new gat
 7. **Verification** — live serial monitor
 
 > Make sure `mcumgr` is installed and accessible in your PATH.
+> AWS profile in use: **`{os.environ.get("AWS_PROFILE", "(default)")}`** — IoT, S3 and the EMnify secret will be read with these credentials.
 """)
         with ui.row().classes("gap-4 mt-4"):
             ui.input("Gateway ID (IMEI)", placeholder="e.g. 354616090640025").classes("w-64").bind_value(state, "gateway_id")
@@ -701,15 +829,25 @@ def _build_step_sim_replace(stepper):
 
 def _build_step_emnify(stepper):
     with ui.step("EMnify SIM Activation"):
+        # Token preference order: Secrets Manager (etoot profile) → env var → manual.
+        token_source = ""
+        if not state.emnify_token:
+            sm_token = fetch_emnify_token_from_secrets_manager()
+            if sm_token:
+                state.emnify_token = sm_token
+                token_source = f"Loaded from AWS Secrets Manager ({EMNIFY_SECRET_NAME}, profile=etoot)"
         env_token = os.environ.get("EMNIFY_APPLICATION_TOKEN", "")
-        if env_token and not state.emnify_token:
+        if not state.emnify_token and env_token:
             state.emnify_token = env_token
+            token_source = "Pre-filled from EMNIFY_APPLICATION_TOKEN env var"
 
         ui.markdown("""
 ### Activate SIM on EMnify
 
-Enter your EMnify **Application Token** (create one at [EMnify Portal → Integrations](https://portal.emnify.com)),
-or set the `EMNIFY_APPLICATION_TOKEN` environment variable before launching the wizard.
+The wizard tries to load the EMnify application token automatically from
+AWS Secrets Manager (`EmnifyAPIKey` under the `etoot` profile).  If that
+isn't available it falls back to the `EMNIFY_APPLICATION_TOKEN` env var,
+or you can paste the token below.
 
 This step reuses `register_sim.py` — the same flow as the CLI script.
 
@@ -720,8 +858,18 @@ The wizard will:
 - Create a device endpoint named after the Gateway ID
 """)
         ui.input("EMnify Application Token", password=True, password_toggle_button=True).classes("w-full mt-2").bind_value(state, "emnify_token")
-        if env_token:
-            ui.label("(Pre-filled from EMNIFY_APPLICATION_TOKEN env var)").classes("text-xs text-grey-6")
+        if token_source:
+            ui.label(f"({token_source})").classes("text-xs text-grey-6")
+
+        def _reload_from_sm():
+            tok = fetch_emnify_token_from_secrets_manager()
+            if tok:
+                state.emnify_token = tok
+                ui.notify("EMnify token reloaded from Secrets Manager", type="positive")
+            else:
+                ui.notify("Failed to load token — see log", type="negative")
+
+        ui.button("Reload from Secrets Manager", icon="cloud_download", on_click=_reload_from_sm).props("flat dense color=primary")
 
         ui.separator()
         with ui.row().classes("gap-2 items-center"):
@@ -743,66 +891,113 @@ The wizard will:
         _nav_buttons(stepper, show_run=True, run_label="Activate SIM", run_handler=_run)
 
 
-def _build_step_flash1(stepper):
-    with ui.step("Flash Firmware Image 1"):
-        ui.markdown("""
-### Flash Primary Firmware Image
+def _build_flash_step(stepper, *, slot: int, step_title: str, body_md: str,
+                      run_label: str, log_label: str):
+    """Shared builder for the two flash steps.  Slot is 1 or 2."""
+    s3_key_attr = f"image_s3_key_{slot}"
+    path_attr = f"image_path_{slot}"
 
-Select the **first** firmware `.bin` file to upload via mcumgr.
-This is typically the latest release candidate.
-""")
+    with ui.step(step_title):
+        ui.markdown(body_md)
+
+        firmware_options = list_firmware_zips()
+
+        def _key_to_label(key: str) -> str:
+            # "firmware/mg100/etoot_mg100_gw_fw_1.2.0-rc2.zip" -> "1.2.0-rc2" + filename for tooltip
+            base = os.path.basename(key)
+            return base.replace("etoot_mg100_gw_fw_", "").replace(".zip", "")
+
+        options_dict = {k: _key_to_label(k) for k in firmware_options}
+
+        with ui.row().classes("w-full gap-2 items-end"):
+            select = ui.select(
+                options=options_dict,
+                label="Firmware version (from S3)",
+                with_input=True,
+            ).classes("flex-grow").bind_value(state, s3_key_attr)
+
+            def _refresh_list():
+                new_opts = {k: _key_to_label(k) for k in list_firmware_zips()}
+                select.options = new_opts
+                select.update()
+                ui.notify(f"Found {len(new_opts)} firmware zip(s)", type="info")
+
+            ui.button("Refresh", icon="refresh", on_click=_refresh_list).props("flat dense")
+
         ui.input(
-            "Image path (.bin)",
+            "Or local image path (.bin) — overrides S3 selection when set",
             placeholder="/path/to/app_update.bin",
-        ).classes("w-full").bind_value(state, "image_path_1")
+        ).classes("w-full mt-2").bind_value(state, path_attr)
 
-        with ui.row().classes("gap-2 mt-2"):
-            ui.label("Timeout (s):")
-            ui.number(value=20, min=5, max=120).classes("w-20").bind_value(state, "timeout")
-            ui.label("Retries:")
-            ui.number(value=3, min=1, max=10).classes("w-20").bind_value(state, "retries")
+        if slot == 1:
+            with ui.row().classes("gap-2 mt-2"):
+                ui.label("Timeout (s):")
+                ui.number(value=20, min=5, max=120).classes("w-20").bind_value(state, "timeout")
+                ui.label("Retries:")
+                ui.number(value=3, min=1, max=10).classes("w-20").bind_value(state, "retries")
 
         async def _run():
-            path = state.image_path_1.strip()
-            path = os.path.expanduser(path)
-            emit_log(f"Checking image path: '{path}'")
-            if not path or not os.path.isfile(path):
+            manual = getattr(state, path_attr).strip()
+            s3_key = getattr(state, s3_key_attr)
+
+            if manual:
+                path = os.path.expanduser(manual)
+                emit_log(f"Using manual image path: '{path}'")
+            elif s3_key:
+                emit_log(f"Fetching firmware from S3: {s3_key}")
+                path = await asyncio.get_event_loop().run_in_executor(
+                    None, download_and_extract_firmware, s3_key
+                )
+                if not path:
+                    ui.notify("Failed to fetch firmware from S3 — see log", type="negative")
+                    return
+                setattr(state, path_attr, path)
+            else:
+                ui.notify("Select a firmware version or enter a local path", type="warning")
+                return
+
+            if not os.path.isfile(path):
                 emit_log(f"✗ File not found: '{path}'")
                 ui.notify(f"Invalid image path: {path}", type="negative")
                 return
-            state.image_path_1 = path
-            await _run_in_thread(_run_flash_blocking, path, "Flash Image 1")
-            ui.notify("Flash image 1 complete", type="positive")
+            setattr(state, path_attr, path)
+            await _run_in_thread(_run_flash_blocking, path, log_label)
+            ui.notify(f"{log_label} complete", type="positive")
 
-        _nav_buttons(stepper, show_run=True, run_label="Flash Image 1", run_handler=_run)
+        _nav_buttons(stepper, show_run=True, run_label=run_label, run_handler=_run)
+
+
+def _build_step_flash1(stepper):
+    _build_flash_step(
+        stepper,
+        slot=1,
+        step_title="Flash Firmware Image 1",
+        body_md=(
+            "### Flash Primary Firmware Image\n\n"
+            f"Pick a firmware version from S3 "
+            f"(`s3://{FIRMWARE_S3_BUCKET}/{FIRMWARE_S3_PREFIX}`).  The selected "
+            "zip will be downloaded to `/tmp/etoot_firmware/` and the "
+            "`app_update.bin` inside will be flashed via mcumgr.\n\n"
+            "Or paste a local path to override."
+        ),
+        run_label="Flash Image 1",
+        log_label="Flash Image 1",
+    )
 
 
 def _build_step_flash2(stepper):
-    with ui.step("Flash Firmware Image 2"):
-        ui.markdown("""
-### Flash Secondary Firmware Image
-
-Select the **second** firmware `.bin` file (e.g. a different release candidate).
-This step is optional — skip if only one image is needed.
-""")
-        ui.input(
-            "Image path (.bin)",
-            placeholder="/path/to/app_update.bin (optional)",
-        ).classes("w-full").bind_value(state, "image_path_2")
-
-        async def _run():
-            path = state.image_path_2.strip()
-            path = os.path.expanduser(path)
-            emit_log(f"Checking image path: '{path}'")
-            if not path or not os.path.isfile(path):
-                emit_log(f"✗ File not found: '{path}'")
-                ui.notify(f"Invalid image path: {path}", type="negative")
-                return
-            state.image_path_2 = path
-            await _run_in_thread(_run_flash_blocking, path, "Flash Image 2")
-            ui.notify("Flash image 2 complete", type="positive")
-
-        _nav_buttons(stepper, show_run=True, run_label="Flash Image 2", run_handler=_run)
+    _build_flash_step(
+        stepper,
+        slot=2,
+        step_title="Flash Firmware Image 2",
+        body_md=(
+            "### Flash Secondary Firmware Image\n\n"
+            "Pick a different firmware version from S3 (optional second image), "
+            "or paste a local path."
+        ),
+        run_label="Flash Image 2",
+        log_label="Flash Image 2",
+    )
 
 
 def _build_step_certs(stepper):
