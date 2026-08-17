@@ -13,6 +13,16 @@
             "servertype": "jlink",
             "device": "nRF52840_xxAA",
             "interface": "swd"
+        },
+        {
+            "name": "Gateway Config Wizard",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/gateway_config_wizard.py",
+            "cwd": "${workspaceFolder}/scripts",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "console": "integratedTerminal",
+            "justMyCode": true
         }
     ]
 }
