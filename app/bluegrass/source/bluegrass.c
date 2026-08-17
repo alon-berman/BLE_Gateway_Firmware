@@ -37,6 +37,12 @@ LOG_MODULE_REGISTER(bluegrass, CONFIG_BLUEGRASS_LOG_LEVEL);
 
 #define CONNECT_TO_SUBSCRIBE_DELAY 4
 
+/* Re-requesting the shadow every second floods the receive path (each
+ * response is the full shadow document) and starves the sensor and control
+ * threads.  Retry slowly instead.
+ */
+#define SHADOW_GET_RETRY_SECONDS 30
+
 /******************************************************************************/
 /* Local Data Definitions                                                     */
 /******************************************************************************/
@@ -47,6 +53,7 @@ static struct {
 	bool get_shadow_processed;
 	struct k_work_delayable heartbeat;
 	uint32_t subscription_delay;
+	uint32_t shadow_get_delay;
 } bg;
 
 /******************************************************************************/
@@ -145,6 +152,7 @@ int bluegrass_subscription_handler(void)
 
 	if (!awsConnected()) {
 		bg.subscription_delay = CONNECT_TO_SUBSCRIBE_DELAY;
+		bg.shadow_get_delay = 0;
 		return resp_code;
 	}
 
@@ -165,7 +173,12 @@ int bluegrass_subscription_handler(void)
 	}
 
 	if (!bg.get_shadow_processed) {
-		resp_code = awsGetShadow();
+		if (bg.shadow_get_delay > 0) {
+			bg.shadow_get_delay -= 1;
+		} else {
+			bg.shadow_get_delay = SHADOW_GET_RETRY_SECONDS;
+			resp_code = awsGetShadow();
+		}
 	}
 
 	if (bg.get_shadow_processed && !bg.gateway_subscribed) {

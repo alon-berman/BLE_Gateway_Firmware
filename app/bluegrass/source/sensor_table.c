@@ -613,7 +613,7 @@ void SensorTable_CreateShadowFromDumpResponse(FwkBufMsg_t *pRsp,
 	JsonMsg_t *pMsg = BP_TRY_TO_TAKE(FWK_BUFFER_MSG_SIZE(JsonMsg_t, size));
 	if (pMsg == NULL) {
 		LOG_ERR("Bad memory allocation...");
-		// wdt_force();		
+		wdt_memory_pressure_hint();
 		return;
 	}
 	pMsg->header.msgCode = FMC_SENSOR_PUBLISH;
@@ -886,7 +886,7 @@ static void ShadowMaker(SensorEntry_t *pEntry)
 		BP_TRY_TO_TAKE(FWK_BUFFER_MSG_SIZE(JsonMsg_t, SHADOW_BUF_SIZE));
 	if (pMsg == NULL) {
 		LOG_ERR("Bad memory allocation...");
-		// wdt_force();		
+		wdt_memory_pressure_hint();
 		return;
 	}
 
@@ -1219,7 +1219,7 @@ void GatewayShadowMaker(bool GreenlistProcessed)
 		FWK_BUFFER_MSG_SIZE(JsonMsg_t, SENSOR_GATEWAY_SHADOW_MAX_SIZE));
 	if (pMsg == NULL) {
 		LOG_ERR("Bad memory allocation...");
-		// wdt_force();
+		wdt_memory_pressure_hint();
 		return;
 	}
 	pMsg->header.msgCode = FMC_GATEWAY_OUT;
@@ -1445,7 +1445,7 @@ static void PublishToGetAccepted(SensorEntry_t *pEntry)
 	JsonMsg_t *pMsg = BufferPool_Take(FWK_BUFFER_MSG_SIZE(JsonMsg_t, size));
 	if (pMsg == NULL) {
 		LOG_ERR("Bad memory allocation...");
-		// wdt_force();
+		wdt_memory_pressure_hint();
 		return;
 	}
 

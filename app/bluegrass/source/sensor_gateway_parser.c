@@ -243,6 +243,8 @@ void SensorGatewayParser(const char *pTopic, const char *pJson)
 	jsmn_start(pJson);
 	if (!jsmn_valid()) {
 		LOG_ERR("Unable to parse subscription %d", jsmn_tokens_found());
+		/* Must release the jsmn mutex taken by jsmn_start. */
+		jsmn_end();
 		return;
 	}
 
@@ -708,7 +710,7 @@ static void ParseArray(int ExpectedSensors)
 		BP_TRY_TO_TAKE(sizeof(SensorGreenlistMsg_t));
 	if (pMsg == NULL) {
 		LOG_ERR("Bad memory allocation in ParseArray");
-		// wdt_force();		
+		wdt_memory_pressure_hint();
 		return;
 	}
 
@@ -758,7 +760,7 @@ static void ParseEventArray(const char *pTopic)
 		BP_TRY_TO_TAKE(sizeof(SensorShadowInitMsg_t));
 	if (pMsg == NULL) {
 		LOG_ERR("Bad memory allocation. in ParseEventArray...");
-		// wdt_force();
+		wdt_memory_pressure_hint();
 		return;
 	}
 

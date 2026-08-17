@@ -45,6 +45,12 @@ LOG_MODULE_REGISTER(wdt, CONFIG_WDT_LOG_LEVEL);
 
 #define WDT_FEED_RATE_MS (CONFIG_WDT_TIMEOUT_MILLISECONDS / 3)
 
+/* Must be faster than the feed rate or feeds are skipped. */
+#define WDT_SYS_WORKQ_CHECK_IN_RATE_MS (WDT_FEED_RATE_MS / 3)
+
+#define WDT_MEMORY_PRESSURE_WINDOW_MS (2 * CONFIG_WDT_TIMEOUT_MILLISECONDS)
+#define WDT_MEMORY_PRESSURE_GAP_MS 60000
+
 #define WDT_MAX_USERS 31
 
 #define WDT_NOT_INITIALIZED_MSG "WDT module not initialized"
@@ -60,19 +66,26 @@ struct wdt_obj {
 	atomic_t check_ins;
 	atomic_t check_mask;
 	int force_id;
+	int sys_workq_id;
 	const struct device *dev;
 	int channel_id;
 	struct k_work_q work_q;
 	struct k_work_delayable feed;
+	struct k_work_delayable sys_workq_check_in;
 };
 
 static struct wdt_obj wdt;
+
+static struct k_spinlock memory_pressure_lock;
+static int64_t memory_pressure_first;
+static int64_t memory_pressure_last;
 
 /******************************************************************************/
 /* Local Function Prototypes                                                  */
 /******************************************************************************/
 static int wdt_initialize(const struct device *device);
 static void wdt_feeder(struct k_work *work);
+static void wdt_sys_workq_checker(struct k_work *work);
 static bool wdt_valid_user_id(int id);
 
 /******************************************************************************/
@@ -142,6 +155,31 @@ int wdt_force(void)
 	return 0;
 }
 
+void wdt_memory_pressure_hint(void)
+{
+	int64_t now = k_uptime_get();
+	k_spinlock_key_t key;
+	bool force;
+
+	if (!wdt.initialized) {
+		return;
+	}
+
+	key = k_spin_lock(&memory_pressure_lock);
+	if ((memory_pressure_first == 0) ||
+	    ((now - memory_pressure_last) > WDT_MEMORY_PRESSURE_GAP_MS)) {
+		memory_pressure_first = now;
+	}
+	memory_pressure_last = now;
+	force = (now - memory_pressure_first) > WDT_MEMORY_PRESSURE_WINDOW_MS;
+	k_spin_unlock(&memory_pressure_lock, key);
+
+	if (force) {
+		LOG_ERR("Persistent memory pressure - forcing reset");
+		wdt_force();
+	}
+}
+
 /******************************************************************************/
 /* Local Function Definitions                                                 */
 /******************************************************************************/
@@ -209,6 +247,14 @@ int wdt_initialize(const struct device *device)
 
 		wdt.initialized = true;
 
+		/* Supervise the system workqueue.  If it stalls, check-ins
+		 * stop, the feeder stops feeding, and the SoC resets.
+		 */
+		wdt.sys_workq_id = wdt_get_user_id();
+		k_work_init_delayable(&wdt.sys_workq_check_in,
+				      wdt_sys_workq_checker);
+		k_work_schedule(&wdt.sys_workq_check_in, K_NO_WAIT);
+
 		LOG_WRN("Watchdog timer started with timeout of %u ms",
 			CONFIG_WDT_TIMEOUT_MILLISECONDS);
 	} while (0);
@@ -236,6 +282,18 @@ static void wdt_feeder(struct k_work *work)
 
 	k_work_schedule_for_queue(&w->work_q, &w->feed,
 				  K_MSEC(WDT_FEED_RATE_MS));
+}
+
+static void wdt_sys_workq_checker(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	if (wdt.sys_workq_id >= 0) {
+		(void)wdt_check_in(wdt.sys_workq_id);
+	}
+
+	k_work_schedule(&wdt.sys_workq_check_in,
+			K_MSEC(WDT_SYS_WORKQ_CHECK_IN_RATE_MS));
 }
 
 static bool wdt_valid_user_id(int id)

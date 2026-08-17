@@ -30,6 +30,7 @@ LOG_MODULE_REGISTER(control, CONFIG_CONTROL_TASK_LOG_LEVEL);
 #include "gateway_common.h"
 #include "gateway_fsm.h"
 #include "rand_range.h"
+#include "wdt.h"
 
 #ifdef CONFIG_BLUEGRASS
 #include "bluegrass.h"
@@ -62,6 +63,7 @@ typedef struct control_task_obj {
 	uint32_t broadcast_count;
 	bool fota_request;
 	bool cloud_connected;
+	int wdt_id;
 } control_task_obj_t;
 
 #define CONTROL_TASK_QUEUE_DEPTH 32
@@ -153,6 +155,8 @@ void control_task_initialize(void)
 	cto.msgTask.pTid = k_current_get();
 
 	k_thread_name_set(cto.msgTask.pTid, THIS_FILE);
+
+	cto.wdt_id = wdt_get_user_id();
 }
 
 void control_task_thread(void)
@@ -190,6 +194,13 @@ static DispatchResult_t gateway_fsm_tick_handler(FwkMsgReceiver_t *pMsgRxer,
 {
 	ARG_UNUSED(pMsg);
 	control_task_obj_t *pObj = FWK_TASK_CONTAINER(control_task_obj_t);
+
+	/* If this tick stops (blocked FSM call or a timer that was never
+	 * restarted), check-ins stop and the watchdog resets the SoC.
+	 */
+	if (pObj->wdt_id >= 0) {
+		(void)wdt_check_in(pObj->wdt_id);
+	}
 
 	gateway_fsm();
 

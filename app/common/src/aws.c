@@ -86,6 +86,22 @@ BUILD_ASSERT((CONFIG_AWS_PUBLISH_WATCHDOG_SECONDS / 2) >
 	     "Incompatible publish watchdog and heartbeat configuration");
 #endif
 
+/* All publishes use QoS 1, so a live link returns PUBACKs at least as often
+ * as the heartbeat.  A connection with no inbound MQTT events for this long
+ * is half-open (common after a weak-signal PDP/NAT drop) and must be torn
+ * down, because it never generates a disconnect event on its own.
+ */
+#define AWS_LINK_LIVENESS_SECONDS 2700
+
+#if CONFIG_AWS_HEARTBEAT_SECONDS != 0
+BUILD_ASSERT(AWS_LINK_LIVENESS_SECONDS > (2 * CONFIG_AWS_HEARTBEAT_SECONDS),
+	     "Liveness timeout must exceed two heartbeat periods");
+#endif
+
+#define AWS_KEEP_ALIVE_MAX_FAILURES 2
+
+#define AWS_DISCONNECT_TIMEOUT K_SECONDS(30)
+
 /******************************************************************************/
 /* Local Data Definitions                                                     */
 /******************************************************************************/
@@ -117,6 +133,10 @@ static int nfds;
 
 static bool aws_connected;
 static bool aws_disconnect;
+
+static int64_t last_rx_event_time;
+static uint32_t keep_alive_failures;
+static bool liveness_disconnect_requested;
 
 static struct addrinfo *saddr;
 
@@ -269,11 +289,38 @@ int awsConnect()
 int awsDisconnect(void)
 {
 	if (aws_connected) {
+		/* Discard stale counts from previous teardowns so the take
+		 * below waits for this disconnect, not an old one.
+		 */
+		k_sem_reset(&disconnected_sem);
 		aws_disconnect = true;
 		AWS_LOG_DBG("Waiting to close MQTT connection");
-		k_sem_take(&disconnected_sem, K_FOREVER);
+		if (k_sem_take(&disconnected_sem, AWS_DISCONNECT_TIMEOUT) !=
+		    0) {
+			AWS_LOG_WRN("Clean MQTT disconnect timed out");
+			awsAbortConnection();
+		}
 		AWS_LOG_DBG("MQTT connection closed");
 	}
+
+	return 0;
+}
+
+int awsRequestDisconnect(void)
+{
+	if (aws_connected) {
+		aws_disconnect = true;
+	}
+
+	return 0;
+}
+
+int awsAbortConnection(void)
+{
+	AWS_LOG_WRN("Aborting MQTT connection");
+	(void)mqtt_abort(&client_ctx);
+	clear_fds();
+	aws_connected = false;
 
 	return 0;
 }
@@ -599,6 +646,10 @@ static void mqtt_evt_handler(struct mqtt_client *const client,
 			     const struct mqtt_evt *evt)
 {
 	int rc;
+
+	/* Any event is proof of inbound traffic (link liveness). */
+	last_rx_event_time = k_uptime_get();
+
 	switch (evt->type) {
 	case MQTT_EVT_CONNACK:
 		if (evt->result != 0) {
@@ -607,6 +658,8 @@ static void mqtt_evt_handler(struct mqtt_client *const client,
 		}
 
 		aws_connected = true;
+		keep_alive_failures = 0;
+		liveness_disconnect_requested = false;
 		k_sem_give(&connected_sem);
 		AWS_LOG_INF("MQTT client connected!");
 		k_work_schedule(&keep_alive,
@@ -891,11 +944,40 @@ static void keep_alive_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	int rc;
+	bool link_dead;
 
 	if (aws_connected) {
 		rc = mqtt_live(&client_ctx);
 		if (rc != 0 && rc != -EAGAIN) {
 			AWS_LOG_ERR("mqtt_live (%d)", rc);
+			keep_alive_failures += 1;
+		} else {
+			keep_alive_failures = 0;
+		}
+
+		link_dead = (keep_alive_failures >=
+			     AWS_KEEP_ALIVE_MAX_FAILURES);
+
+		if ((CONFIG_AWS_HEARTBEAT_SECONDS != 0) &&
+		    ((k_uptime_get() - last_rx_event_time) >
+		     (AWS_LINK_LIVENESS_SECONDS * MSEC_PER_SEC))) {
+			AWS_LOG_ERR("No inbound MQTT events in %d seconds",
+				    AWS_LINK_LIVENESS_SECONDS);
+			link_dead = true;
+		}
+
+		if (link_dead) {
+			keep_alive_failures = 0;
+			if (liveness_disconnect_requested) {
+				/* The RX thread never completed the previous
+				 * request; escalate.
+				 */
+				liveness_disconnect_requested = false;
+				(void)awsAbortConnection();
+			} else {
+				liveness_disconnect_requested = true;
+				(void)awsRequestDisconnect();
+			}
 		}
 
 		k_work_schedule(&keep_alive, K_SECONDS(CONFIG_MQTT_KEEPALIVE));
