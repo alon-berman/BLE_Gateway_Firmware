@@ -51,6 +51,13 @@ LOG_MODULE_REGISTER(gateway_fsm, CONFIG_GATEWAY_FSM_LOG_LEVEL);
 #define CLOUD_CONNECT_TIMEOUT 10
 #endif
 
+/* A half-open connection never produces a disconnect event, so the
+ * wait-for-disconnect state must escalate: first request an orderly
+ * disconnect, then abort the connection outright.
+ */
+#define CLOUD_DISCONNECT_REQUEST_TICKS 30
+#define CLOUD_DISCONNECT_ABORT_TICKS 90
+
 typedef int gsm_func(void);
 typedef bool gsm_status_func(void);
 
@@ -73,10 +80,14 @@ static struct {
 	gsm_func *resolve_server;
 	gsm_func *cloud_connect;
 	gsm_func *cloud_disconnect;
+	gsm_func *cloud_request_disconnect;
+	gsm_func *cloud_abort;
 	gsm_status_func *cloud_is_connected;
 	gsm_func *cert_load;
 	gsm_func *cert_unload;
 } gsm;
+
+static uint32_t wait_for_disconnect_ticks;
 
 /******************************************************************************/
 /* Local Function Prototypes                                                  */
@@ -153,6 +164,8 @@ void gateway_fsm_init(void)
 	gsm.resolve_server = awsGetServerAddr;
 	gsm.cloud_connect = awsConnect;
 	gsm.cloud_disconnect = awsDisconnect;
+	gsm.cloud_request_disconnect = awsRequestDisconnect;
+	gsm.cloud_abort = awsAbortConnection;
 	gsm.cloud_is_connected = awsConnected;
 	gsm.cert_load = lcz_certs_load;
 	gsm.cert_unload = lcz_certs_unload;
@@ -242,7 +255,20 @@ void gateway_fsm(void)
 
 	case GATEWAY_STATE_CLOUD_WAIT_FOR_DISCONNECT:
 		if (!gsm.cloud_is_connected()) {
+			wait_for_disconnect_ticks = 0;
 			set_state(GATEWAY_STATE_CLOUD_DISCONNECTED);
+		} else if ((gsm.cloud_request_disconnect != NULL) &&
+			   (gsm.cloud_abort != NULL)) {
+			wait_for_disconnect_ticks += 1;
+			if (wait_for_disconnect_ticks ==
+			    CLOUD_DISCONNECT_REQUEST_TICKS) {
+				(void)gsm.cloud_request_disconnect();
+			} else if (wait_for_disconnect_ticks >=
+				   CLOUD_DISCONNECT_ABORT_TICKS) {
+				wait_for_disconnect_ticks = 0;
+				(void)gsm.cloud_abort();
+				set_state(GATEWAY_STATE_CLOUD_DISCONNECTED);
+			}
 		}
 		break;
 

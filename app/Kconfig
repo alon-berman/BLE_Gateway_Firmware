@@ -119,9 +119,13 @@ config SENSOR_TOPIC_FMT_STR_PREFIX
 
 config SHADOW_IN_MAX_SIZE
     int "Maximum size of subscription/shadow that can be processed"
-    default 11600
+    default 15600
     help
         The timestamps can make the shadow larger than 7K bytes.
+        A gateway tracking a full sensor table (14 BT510s) can receive a
+        /get/accepted document that exceeds 11600 bytes; a document larger
+        than this limit is discarded, which prevents the gateway from ever
+        becoming ready to publish.
 
 config SENSOR_TABLE_SIZE
     int "Number of sensors viewable on Bluegrass gateway page"

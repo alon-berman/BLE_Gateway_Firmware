@@ -56,6 +56,14 @@ int wdt_pause(int id);
  */
 int wdt_force(void);
 
+/**
+ * @brief Report a buffer/memory allocation failure.  Transient pressure is
+ * tolerated; if pressure persists without relief for longer than twice the
+ * watchdog timeout, a watchdog reset is forced because the system cannot
+ * recover exhausted pools on its own.
+ */
+void wdt_memory_pressure_hint(void);
+
 #ifdef __cplusplus
 }
 #endif

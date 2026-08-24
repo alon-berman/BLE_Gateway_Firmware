@@ -18,9 +18,11 @@ from datetime import datetime
 from time import sleep
 from typing import Optional
 
-# All AWS access (IoT, S3, Secrets Manager) must use the `etoot` profile.
-# Set before any boto3 client is constructed so sessions pick it up automatically.
-os.environ.setdefault("AWS_PROFILE", "default")
+# All AWS access (IoT, S3, Secrets Manager) must use the `etoot` profile — any
+# other profile points at a different account, so this overrides the ambient
+# value rather than deferring to it.  Set before any boto3 client is constructed
+# so sessions pick it up automatically.
+os.environ["AWS_PROFILE"] = "etoot"
 
 import serial
 import serial.tools.list_ports

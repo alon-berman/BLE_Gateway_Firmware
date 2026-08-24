@@ -43,6 +43,18 @@ int awsConnect(void);
 bool awsConnected(void);
 bool awsPublished(void);
 int awsDisconnect(void);
+
+/**
+ * @brief Request an asynchronous disconnect.  The RX thread performs the
+ * teardown.  Safe to call from any thread; does not block.
+ */
+int awsRequestDisconnect(void);
+
+/**
+ * @brief Abort the MQTT connection and mark it disconnected.  Used when a
+ * half-open connection never produces a disconnect event.
+ */
+int awsAbortConnection(void);
 int awsSendData(char *data, uint8_t *topic);
 int awsSendBinData(char *data, uint32_t len, uint8_t *topic);
 int awsPublishShadowPersistentData(void);
