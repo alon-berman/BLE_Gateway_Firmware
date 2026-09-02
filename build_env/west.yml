@@ -1,0 +1,96 @@
+# Reconstructed west manifest for the etoot MG100 gateway firmware.
+#
+# Laird deleted the original Pinnacle-100-Firmware-Manifest repo. Our fork's app
+# tree is Laird v6.4.1 (GA5 line, tagged 2022-07-12: snake_case attributes,
+# modules/lib/laird_connect layout, app/version says 6.4.1) plus etoot commits.
+# The fleet's 7.0.7 build artefacts (CMakeCache/ncs_version.h inside
+# s3://etoot-devices/firmware/mg100/*.zip) show NCS 1.7.0 / Zephyr 2.6.99 and the
+# workspace paths used here. Pins: sdk-nrf = Laird tag v1.7.0 (== upstream NCS
+# v1.7.0); zephyr = Laird branch laird/ncs_1.7.0 at its last commit before the
+# v6.4.1 tag; zephyr_lib + attributes = heads of Laird's mg100/GA5 branches;
+# framework + zephyr_boards = last main commits before the v6.4.1 tag.
+manifest:
+  remotes:
+    - name: JsmnRepo
+      url-base: https://github.com/zserge
+    - name: LairdCP
+      url-base: https://github.com/LairdCP
+    - name: etoot
+      url-base: https://github.com/alon-berman
+
+  projects:
+    - name: BLE_Gateway_Firmware
+      path: ble_gateway_firmware
+      remote: etoot
+      revision: master
+    # framework: last commit before 4b8d1e00b8 (2022-01-24) introduced a hard
+    # dependency on a Laird "cmake_functions" module that no longer exists publicly.
+    - name: zephyr_framework
+      path: modules/lib/laird_connect/framework
+      remote: LairdCP
+      revision: 0b628d9f85e37bf7587a85b68e587cf76e70966e
+    - name: attributes
+      path: modules/lib/laird_connect/attributes
+      remote: LairdCP
+      revision: d483d230e02266d43e369adc75afc1044ee5c06f
+    - name: zephyr_lib
+      path: modules/lib/laird_connect/zephyr_lib
+      remote: LairdCP
+      revision: 0d1223f89775436782558334a11ab839527e752b
+    - name: jsmn
+      path: modules/lib/jsmn
+      remote: JsmnRepo
+      revision: 053d3cd29200edb1bfd181d917d140c16c1f8834
+    # zephyr_boards: parent of eda2ffc35f "MG100: optimizations" (2022-03-01), which
+    # dropped SPI/I2C/LIS2DH from mg100_defconfig. The fleet's 7.0.7 .config still has
+    # them (movement sensor + SD card), so the pre-March-2022 board files are correct.
+    - name: zephyr_boards
+      path: boards/arm
+      remote: LairdCP
+      revision: d513dc2ef74eec931650d7889d6e12913c9107a4
+    - name: sdk-nrf
+      path: nrf
+      remote: LairdCP
+      revision: v1.7.0
+      import:
+        # Big modules the MG100 AWS build never touches.
+        name-blocklist:
+          - Alexa-Gadgets-Embedded-Sample-Code
+          - canopennode
+          - civetweb
+          - connectedhomeip
+          - find-my
+          - hal_st
+          - homekit
+          - loramac-node
+          - matter
+          - mbed-cloud-client
+          - openthread
+    # NOTE: LairdCP/zephyr tag "v1.7.0" is Zephyr RTOS 1.7.0 (2017), NOT NCS 1.7.0.
+    # The NCS 1.7.0 line lives on branch laird/ncs_1.7.0; this is its last commit
+    # (2022-06-30, "hl7800: Fix socket error race condition") before the v6.4.1
+    # tag. The branch head fec5a93676 (2022-07-19) adds one more hl7800 fix
+    # ("Fix TCP server closed interrupting TX/RX") — candidate for a later 7.1.x.
+    - name: zephyr
+      remote: LairdCP
+      revision: a68516e8905f844b931b521c6052f868f9a480a4
+      import:
+        name-allowlist:
+          - cmsis
+          - fatfs
+          - hal_nordic
+          - libmetal
+          - littlefs
+          - lvgl
+          - mbedtls
+          - mcumgr
+          - mipi-sys-t
+          - net-tools
+          - nrf_hw_models
+          - open-amp
+          - segger
+          - tinycbor
+          - tinycrypt
+
+  self:
+    path: manifest
