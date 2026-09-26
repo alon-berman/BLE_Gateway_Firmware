@@ -51,6 +51,9 @@ extern "C" {
 #define SHADOW_MG100_MAX_LOG_SIZE "\"maxLogSizeMB\":"
 #define SHADOW_MG100_SDCARD_FREE "\"sdCardFreeMB\":"
 #define SHADOW_MG100_CURR_LOG_SIZE "\"logSizeMB\":"
+#define SHADOW_MG100_UP_TIME "\"up_time\":"
+#define SHADOW_MG100_MODEM_RESETS "\"modem_resets\":"
+#define SHADOW_MG100_REG_LOSSES "\"reg_losses\":"
 
 #ifdef CONFIG_NET_L2_ETHERNET
 struct shadow_persistent_values_ethernet {
@@ -75,6 +78,7 @@ struct shadow_persistent_values_ethernet {
 struct shadow_persistent_values {
 	const char *firmware_version;
 	const char *os_version;
+	const char *reset_reason;
 #ifdef CONFIG_MODEM_HL7800
 	const char *radio_version;
 	const char *IMEI;
@@ -133,6 +137,8 @@ static const struct json_obj_descr shadow_persistent_values_descr[] = {
 	JSON_OBJ_DESCR_PRIM(struct shadow_persistent_values, firmware_version,
 			    JSON_TOK_STRING),
 	JSON_OBJ_DESCR_PRIM(struct shadow_persistent_values, os_version,
+			    JSON_TOK_STRING),
+	JSON_OBJ_DESCR_PRIM(struct shadow_persistent_values, reset_reason,
 			    JSON_TOK_STRING),
 #ifdef CONFIG_MODEM_HL7800
 	JSON_OBJ_DESCR_PRIM(struct shadow_persistent_values, radio_version,

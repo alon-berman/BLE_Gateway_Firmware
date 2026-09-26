@@ -93,6 +93,21 @@ config AWS_MAX_CONSECUTIVE_CONNECTION_FAILURES
     help
         Disabled when 0
 
+config GATEWAY_RECOVERY_MODEM_RESET_SECONDS
+    int "Seconds without a cloud connection before the modem is hard-reset"
+    default 1800
+    help
+        Self-recovery ladder, step 1. Counted at 1 Hz by the gateway FSM
+        while the gateway is commissioned and not in FOTA or airplane mode;
+        cleared whenever the cloud connection is up. 0 disables the step.
+
+config GATEWAY_RECOVERY_REBOOT_SECONDS
+    int "Seconds without a cloud connection before the SoC reboots"
+    default 5400
+    help
+        Self-recovery ladder, step 2 (software reset). Must exceed
+        GATEWAY_RECOVERY_MODEM_RESET_SECONDS. 0 disables the step.
+
 config USE_SINGLE_AWS_TOPIC
     bool "Send all sensor data to gateway topic"
     help

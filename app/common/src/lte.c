@@ -79,8 +79,12 @@ static const struct lcz_led_blink_pattern NETWORK_SEARCH_LED_PATTERN = {
 	.repeat_count = REPEAT_INDEFINITELY
 };
 
-// Maximum allowed LTE dc's before hard resetting system
-#define MAX_DISCONNECTS_PER_SESSION 2
+/* Registration losses are counted for diagnostics only.  Recovery (modem
+ * hard-reset, then reboot) is driven by time without a cloud connection in
+ * gateway_fsm.c, not by a loss count: the old "3rd loss since boot ->
+ * wdt_force()" rule rebooted gateways at churning sites several times a day
+ * (519 reboots across 34 gateways in 30 days, Sept 2026).
+ */
 
 #ifdef CONFIG_LCZ_MEMFAULT
 #define BUILD_ID_SIZE 9
@@ -140,7 +144,8 @@ static int32_t local_offset;
 static bool initialized;
 static bool log_lte_dropped = false;
 static bool lte_network_ready = false;
-static int reset_counter = 0;
+static uint32_t registration_losses;
+static uint32_t modem_recoveries;
 
 static struct mgmt_events iface_events[] = {
 	{
@@ -220,6 +225,31 @@ int lte_init(void)
 #endif
 
 	return rc;
+}
+
+int lte_recover_modem(void)
+{
+	int rc;
+
+	modem_recoveries += 1;
+	LOG_WRN("Hard-resetting HL7800 (recovery #%u, %u registration losses since boot)",
+		modem_recoveries, registration_losses);
+	rc = mdm_hl7800_reset();
+	if (rc < 0) {
+		LOG_ERR("HL7800 reset failed (%d)", rc);
+	}
+
+	return rc;
+}
+
+uint32_t lte_get_registration_losses(void)
+{
+	return registration_losses;
+}
+
+uint32_t lte_get_modem_recoveries(void)
+{
+	return modem_recoveries;
 }
 
 int lte_network_init(void)
@@ -450,12 +480,9 @@ static void modem_event_callback(enum mdm_hl7800_event event, void *event_data)
 		case HL7800_REGISTRATION_DENIED:
 		case HL7800_UNABLE_TO_CONFIGURE:
 		case HL7800_OUT_OF_COVERAGE:
-			reset_counter++;
-			if (reset_counter > MAX_DISCONNECTS_PER_SESSION){
-				LOG_ERR("Reached maximum HL7800 RESETS per run. Hard Resetting...");
-				reset_counter = 0;
-				wdt_force();
-			}
+			registration_losses += 1;
+			LOG_WRN("LTE registration lost (state %u, loss #%u since boot)",
+				code, registration_losses);
 			lcz_led_turn_off(NETWORK_LED);
 			MFLT_METRICS_TIMER_START(lte_ttf);
 			if ((code == HL7800_OUT_OF_COVERAGE ||

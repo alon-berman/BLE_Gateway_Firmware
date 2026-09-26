@@ -25,6 +25,7 @@ LOG_MODULE_REGISTER(gateway_fsm, CONFIG_GATEWAY_FSM_LOG_LEVEL);
 #endif
 #include "lcz_certs.h"
 #include "attr.h"
+#include "lcz_software_reset.h"
 #if defined(CONFIG_BLUEGRASS)
 #include "bluegrass.h"
 #endif
@@ -58,6 +59,15 @@ LOG_MODULE_REGISTER(gateway_fsm, CONFIG_GATEWAY_FSM_LOG_LEVEL);
 #define CLOUD_DISCONNECT_REQUEST_TICKS 30
 #define CLOUD_DISCONNECT_ABORT_TICKS 90
 
+/* Self-recovery ladder.  Time without a cloud connection (1 Hz ticks) before
+ * the modem is hard-reset in place, then before the SoC reboots.  This
+ * replaces the registration-loss counter that used to force a watchdog reset
+ * on the third loss since boot.  0 disables a step.
+ */
+#define RECOVERY_MODEM_RESET_SECONDS CONFIG_GATEWAY_RECOVERY_MODEM_RESET_SECONDS
+#define RECOVERY_REBOOT_SECONDS CONFIG_GATEWAY_RECOVERY_REBOOT_SECONDS
+#define RECOVERY_MODEM_INIT_DELAY_SECONDS 5
+
 typedef int gsm_func(void);
 typedef bool gsm_status_func(void);
 
@@ -73,6 +83,7 @@ static struct {
 	bool cloud_disconnect_request;
 	bool decommission_request;
 	bool start_wait_for_network_timer;
+	bool modem_recovery_request;
 
 	gsm_func *modem_init;
 	gsm_func *network_init;
@@ -88,6 +99,8 @@ static struct {
 } gsm;
 
 static uint32_t wait_for_disconnect_ticks;
+static uint32_t cloud_down_seconds;
+static bool modem_recovery_done;
 
 /******************************************************************************/
 /* Local Function Prototypes                                                  */
@@ -105,6 +118,8 @@ static void fota_handler(void);
 static void decommission_handler(void);
 
 static bool timer_expired(void);
+
+static void recovery_ladder(void);
 
 static void set_state(enum gateway_state next_state);
 
@@ -174,6 +189,8 @@ void gateway_fsm_init(void)
 
 void gateway_fsm(void)
 {
+	recovery_ladder();
+
 	switch (gsm.state) {
 	case GATEWAY_STATE_POWER_UP_INIT:
 		set_state(GATEWAY_STATE_MODEM_INIT);
@@ -308,6 +325,69 @@ void gateway_fsm_request_cloud_disconnect(void)
 /******************************************************************************/
 /* Local Function Definitions                                                 */
 /******************************************************************************/
+static void recovery_ladder(void)
+{
+#if (RECOVERY_MODEM_RESET_SECONDS > 0) || (RECOVERY_REBOOT_SECONDS > 0)
+	switch (gsm.state) {
+	case GATEWAY_STATE_CLOUD_CONNECTED:
+		cloud_down_seconds = 0;
+		modem_recovery_done = false;
+		return;
+
+	case GATEWAY_STATE_WAIT_FOR_COMMISSION:
+	case GATEWAY_STATE_FOTA_BUSY:
+	case GATEWAY_STATE_DECOMMISSION:
+		/* Not provisioned or intentionally offline: nothing to recover. */
+		cloud_down_seconds = 0;
+		return;
+
+	default:
+		break;
+	}
+
+#if defined(CONFIG_MODEM_HL7800)
+	if (attr_get_signed32(ATTR_ID_modem_functionality, 0) ==
+	    MODEM_FUNCTIONALITY_AIRPLANE) {
+		cloud_down_seconds = 0;
+		return;
+	}
+#endif
+
+	if (cloud_down_seconds < UINT32_MAX) {
+		cloud_down_seconds += 1;
+	}
+
+#if RECOVERY_REBOOT_SECONDS > 0
+	if (cloud_down_seconds >= RECOVERY_REBOOT_SECONDS) {
+		LOG_ERR("No cloud connection for %u s (state %u); rebooting",
+			cloud_down_seconds, gsm.state);
+		lcz_software_reset_after_assert(0);
+		return;
+	}
+#endif
+
+#if (RECOVERY_MODEM_RESET_SECONDS > 0) && defined(CONFIG_MODEM_HL7800)
+	if (!modem_recovery_done &&
+	    cloud_down_seconds >= RECOVERY_MODEM_RESET_SECONDS) {
+		modem_recovery_done = true;
+		LOG_WRN("No cloud connection for %u s (state %u); resetting modem",
+			cloud_down_seconds, gsm.state);
+		if (gsm.cloud_is_connected()) {
+			(void)gsm.cloud_abort();
+		}
+		gateway_fsm_network_disconnected_callback();
+		gateway_fsm_cloud_disconnected_callback();
+		gsm.modem_recovery_request = true;
+		gsm.modem_and_network_init_complete = false;
+		gsm.server_resolved = false;
+		wait_for_disconnect_ticks = 0;
+		gsm.timer = RECOVERY_MODEM_INIT_DELAY_SECONDS;
+		set_state(GATEWAY_STATE_MODEM_INIT);
+	}
+#endif
+#endif
+}
+
 static void set_state(enum gateway_state next_state)
 {
 	if (next_state != gsm.state) {
@@ -338,6 +418,15 @@ static bool timer_expired(void)
 static void modem_init_handler(void)
 {
 	if (timer_expired()) {
+#if defined(CONFIG_MODEM_HL7800)
+		if (gsm.modem_recovery_request) {
+			gsm.modem_recovery_request = false;
+			if (lte_recover_modem() < 0) {
+				set_state(GATEWAY_STATE_MODEM_ERROR);
+				return;
+			}
+		}
+#endif
 		if (gsm.modem_init() < 0) {
 			set_state(GATEWAY_STATE_MODEM_ERROR);
 		} else {
