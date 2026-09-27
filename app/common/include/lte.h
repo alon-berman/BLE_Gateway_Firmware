@@ -9,6 +9,9 @@
 #ifndef __LTE_H__
 #define __LTE_H__
 
+#include <stdint.h>
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,6 +62,27 @@ void set_lte_dns_ready(void);
  * @return int 0 on success
  */
 int lte_get_ip_address(bool get_ipv6, char *ip_addr, int ip_addr_len);
+
+/**
+ * @brief Hard-reset and reconfigure the HL7800 in place (self-recovery
+ * ladder, step 1).  Blocks the caller for the modem boot and configuration
+ * sequence (tens of seconds); call from the control task only.
+ *
+ * @retval 0 on success, negative on error
+ */
+int lte_recover_modem(void);
+
+/**
+ * @brief Number of network registration-loss events since boot (diagnostics,
+ * published in the gateway heartbeat as reg_losses).
+ */
+uint32_t lte_get_registration_losses(void);
+
+/**
+ * @brief Number of modem recoveries performed since boot (diagnostics,
+ * published in the gateway heartbeat as modem_resets).
+ */
+uint32_t lte_get_modem_recoveries(void);
 
 #ifdef __cplusplus
 }

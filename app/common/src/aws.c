@@ -86,17 +86,17 @@ BUILD_ASSERT((CONFIG_AWS_PUBLISH_WATCHDOG_SECONDS / 2) >
 	     "Incompatible publish watchdog and heartbeat configuration");
 #endif
 
-/* All publishes use QoS 1, so a live link returns PUBACKs at least as often
- * as the heartbeat.  A connection with no inbound MQTT events for this long
- * is half-open (common after a weak-signal PDP/NAT drop) and must be torn
- * down, because it never generates a disconnect event on its own.
+/* Every PUBACK and every PINGRESP is an inbound MQTT event, and the keep-alive
+ * job pings at least once per CONFIG_MQTT_KEEPALIVE seconds, so a live link is
+ * never idle for two keep-alive periods.  A connection with no inbound MQTT
+ * events for this long is half-open (common after a weak-signal PDP/NAT drop)
+ * and must be torn down, because it never generates a disconnect event on its
+ * own.
  */
-#define AWS_LINK_LIVENESS_SECONDS 2700
+#define AWS_LINK_LIVENESS_SECONDS 900
 
-#if CONFIG_AWS_HEARTBEAT_SECONDS != 0
-BUILD_ASSERT(AWS_LINK_LIVENESS_SECONDS > (2 * CONFIG_AWS_HEARTBEAT_SECONDS),
-	     "Liveness timeout must exceed two heartbeat periods");
-#endif
+BUILD_ASSERT(AWS_LINK_LIVENESS_SECONDS > (2 * CONFIG_MQTT_KEEPALIVE),
+	     "Liveness timeout must exceed two keep-alive periods");
 
 #define AWS_KEEP_ALIVE_MAX_FAILURES 2
 
@@ -211,6 +211,7 @@ int awsInit(void)
 	/* init shadow data */
 	reported->os_version = KERNEL_VERSION_STRING;
 	reported->firmware_version = APP_VERSION_STRING;
+	reported->reset_reason = attr_get_quasi_static(ATTR_ID_reset_reason);
 #ifdef CONFIG_MODEM_HL7800
 	reported->IMEI = attr_get_quasi_static(ATTR_ID_gateway_id);
 	reported->ICCID = attr_get_quasi_static(ATTR_ID_iccid);
@@ -508,6 +509,9 @@ int awsPublishHeartbeat(void)
 		 CONVERSION_MAX_STR_LEN + strlen(SHADOW_MG100_MAX_LOG_SIZE) +
 		 CONVERSION_MAX_STR_LEN + strlen(SHADOW_MG100_CURR_LOG_SIZE) +
 		 CONVERSION_MAX_STR_LEN + strlen(SHADOW_MG100_SDCARD_FREE) +
+		 CONVERSION_MAX_STR_LEN + strlen(SHADOW_MG100_UP_TIME) +
+		 CONVERSION_MAX_STR_LEN + strlen(SHADOW_MG100_MODEM_RESETS) +
+		 CONVERSION_MAX_STR_LEN + strlen(SHADOW_MG100_REG_LOSSES) +
 		 CONVERSION_MAX_STR_LEN + strlen(SHADOW_REPORTED_END)];
 
 	struct battery_data *battery = batteryGetStatus();
@@ -525,7 +529,7 @@ int awsPublishHeartbeat(void)
 
 	snprintf(
 		msg, sizeof(msg),
-		"%s%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d%s",
+		"%s%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%d,%s%u,%s%u,%s%u%s",
 		SHADOW_REPORTED_START, SHADOW_MG100_BATT_LEVEL,
 		battery->batteryCapacity, SHADOW_MG100_BATT_VOLT,
 		battery->batteryVoltage, SHADOW_MG100_PWR_STATE,
@@ -545,7 +549,11 @@ int awsPublishHeartbeat(void)
 		SHADOW_MG100_CURR_LOG_SIZE, log_size, SHADOW_MG100_SDCARD_FREE,
 		free_space, SHADOW_RADIO_RSSI,
 		attr_get_signed32(ATTR_ID_lte_rsrp, 0), SHADOW_RADIO_SINR,
-		attr_get_signed32(ATTR_ID_lte_sinr, 0), SHADOW_REPORTED_END);
+		attr_get_signed32(ATTR_ID_lte_sinr, 0), SHADOW_MG100_UP_TIME,
+		(uint32_t)(k_uptime_get() / MSEC_PER_SEC),
+		SHADOW_MG100_MODEM_RESETS, lte_get_modem_recoveries(),
+		SHADOW_MG100_REG_LOSSES, lte_get_registration_losses(),
+		SHADOW_REPORTED_END);
 
 	return awsSendData(msg, GATEWAY_TOPIC);
 }
@@ -980,7 +988,13 @@ static void keep_alive_work_handler(struct k_work *work)
 			}
 		}
 
-		k_work_schedule(&keep_alive, K_SECONDS(CONFIG_MQTT_KEEPALIVE));
+		/* Check twice per keep-alive period so a PINGREQ always leaves
+		 * before the broker's 1.5 x keep-alive limit, even when
+		 * mqtt_live() skipped the previous check because of recent
+		 * traffic.
+		 */
+		k_work_schedule(&keep_alive,
+				K_SECONDS(CONFIG_MQTT_KEEPALIVE / 2));
 	}
 }
 
