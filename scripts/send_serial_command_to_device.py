@@ -1,32 +1,38 @@
-import serial
+"""Send one shell command to an MG100 over its UART and return the reply."""
+
 import argparse
 
-def execute_command_over_serial(command, device: str = "/dev/ttyUSB0", baudrate: int = 115200):
-    # Connect to the device over serial
-    ser = serial.Serial(device, 115200)
-    
-    if ser.isOpen():
-        # Write the command followed by a newline (this might depend on your device's requirements)
+import serial
+
+
+def execute_command_over_serial(command, device: str = "/dev/ttyUSB0",
+                                baudrate: int = 115200,
+                                read_timeout: float = 2,
+                                quiet: bool = False) -> str:
+    """Write `command` to the device shell and return what it printed.
+
+    Reads for up to `read_timeout` seconds (or 4096 bytes). The reply is also
+    echoed to stdout unless `quiet` is set. Undecodable bytes (boot noise,
+    a log line cut in half) are replaced instead of raising.
+    """
+    with serial.Serial(device, baudrate, timeout=read_timeout) as ser:
+        ser.reset_input_buffer()
         ser.write((command + '\n').encode())
-        
-        # Give the device some time to execute the command and respond
-        ser.timeout = 2
-        
-        # Read the output (modify this part as per your requirement, here it reads 4096 bytes)
-        output = ser.read(4096).decode()
+        output = ser.read(4096).decode(errors='replace')
+    if not quiet:
         print(output)
-        
-        # Close the serial connection
-        ser.close()
-    else:
-        print(f"Failed to open device {device}")
+    return output
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Execute a command on a device over serial.")
-    parser.add_argument("-s", "--serial", default="/dev/ttyUSB0", help="Command to execute on the device.")
+    parser = argparse.ArgumentParser(
+        description="Execute a shell command on a device over serial.")
+    parser.add_argument("-s", "--serial", default="/dev/ttyUSB0",
+                        help="Serial device, e.g. /dev/ttyUSB0 or /dev/cu.usbserial-XXXX.")
     parser.add_argument("command", help="Command to execute on the device.")
-    parser.add_argument("-b","--baud", type=int, default=115200, help="Command to execute on the device.")
+    parser.add_argument("-b", "--baud", type=int, default=115200,
+                        help="Baud rate.")
 
     args = parser.parse_args()
-    
-    execute_command_over_serial(args.serial, args.baud, args.command)
+    execute_command_over_serial(args.command, device=args.serial,
+                                baudrate=args.baud)
