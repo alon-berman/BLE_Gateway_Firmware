@@ -12,3 +12,34 @@ Documentation for the BLE Gateway Firmware is [HERE!](https://lairdcp.github.io/
 # List images command
 
 `(.venv) bermanalon@pop-os:~/git/etoot-gw-fw/ble_gateway_firmware/scripts$ mcumgr image list --conntype serial --connstring /dev/ttyUSB0 -t 20 -r 3 `
+
+# Flashing a gateway over serial
+
+```
+python scripts/mcumgr_flash.py --image_path build/mg100/aws/zephyr/app_update.bin \
+    -cs /dev/ttyUSB0 --no_monitor
+```
+
+`mcumgr` must be on `PATH` or in `~/go/bin`. The script exits `0` only when the
+new image is running **and** confirmed; any failure exits `1` with the step
+that failed, so wrappers such as `gateway_config_wizard.py` can trust the code.
+
+What it does, and verifies at each step against the image's MCUboot SHA-256
+(read from the `.bin` itself, the same value `mcumgr image list` shows):
+
+1. Waits for the device to answer SMP, up to 6 minutes. A gateway on firmware
+   7.1.0 or older can be unresponsive for up to 5 minutes while it waits for a
+   forced watchdog reset.
+2. Uploads to slot 1, up to 3 attempts. Skipped if slot 1 already holds the
+   image, or if the image is already running.
+3. Marks the image for test and resets.
+4. Waits for the swapped image to boot, up to 5 minutes. Fails fast if the
+   device comes back on the old image.
+5. Confirms, and checks the confirmed image is the new one.
+
+`commissioned` is cleared during the flash and set back afterwards. If the
+flash fails it is restored to whatever it was before, so a failed flash does
+not leave a working gateway decommissioned.
+
+Hardware-free tests: `python scripts/tests/test_mcumgr_flash.py`
+(or `python -m pytest scripts/tests`).
