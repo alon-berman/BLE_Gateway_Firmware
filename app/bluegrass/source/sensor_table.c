@@ -90,7 +90,9 @@ BUILD_ASSERT(((sizeof(SENSOR_SUBSCRIPTION_TOPIC_FMT_STR) +
 	(SENSOR_NAME_MAX_SIZE + sizeof('-') + MAX_KEY_STR_LEN)
 #define MANGLED_NAME_MAX_SIZE (MANGLED_NAME_MAX_STR_LEN + 1)
 
-/* needs around 5K for 13 sensors {"reported":{"bt510":{"sensors":[["c13a7e4118a2",<epoch>,false], .... */
+/* Each table entry is 34 bytes: ["c13a7e4118a2",<epoch>,false],
+ * so a full 18-slot table needs about 700 bytes.
+ */
 #define SENSOR_GATEWAY_SHADOW_MAX_SIZE 4600
 CHECK_BUFFER_SIZE(FWK_BUFFER_MSG_SIZE(JsonMsg_t,
 				      SENSOR_GATEWAY_SHADOW_MAX_SIZE));
