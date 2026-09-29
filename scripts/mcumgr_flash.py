@@ -28,6 +28,7 @@ import time
 
 import serial
 
+from mg100_port import PortNotFound, resolve_port
 from send_serial_command_to_device import execute_command_over_serial
 
 # Higher MTUs do not work over the MG100 UART.
@@ -364,6 +365,16 @@ def main(image_path, timeout, retries, conntype, connstring,
         print(f"image {image_path}\n  no MCUboot SHA-256 found in the file; "
               "steps will be verified by slot state only")
 
+    if conntype == "serial":
+        try:
+            detected = resolve_port(connstring)
+        except PortNotFound as exc:
+            print(f"FAILED: {exc}")
+            return 1
+        if detected != connstring:
+            print(f"serial port {detected} (auto-detected)")
+        connstring = detected
+
     try:
         flasher = Flasher(conntype, connstring, timeout, retries)
     except FlashError as exc:
@@ -408,7 +419,8 @@ if __name__ == '__main__':
     parser.add_argument('-ct', '--conntype', type=str,
                         help='the connection type', default='serial')
     parser.add_argument('-cs', '--connstring', type=str,
-                        help='serial device, e.g. /dev/ttyUSB0', default='/dev/ttyUSB0')
+                        help='serial device, e.g. /dev/ttyUSB0; "auto" (the default) '
+                             'finds the MG100 cable', default='auto')
     parser.add_argument('--image_path', type=str,
                         help='path to .bin image',
                         default=os.path.join('build', 'mg100', 'aws', 'zephyr', 'app_update.bin'))

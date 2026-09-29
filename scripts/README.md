@@ -16,9 +16,11 @@ Documentation for the BLE Gateway Firmware is [HERE!](https://lairdcp.github.io/
 # Flashing a gateway over serial
 
 ```
-python scripts/mcumgr_flash.py --image_path build/mg100/aws/zephyr/app_update.bin \
-    -cs /dev/ttyUSB0 --no_monitor
+python scripts/mcumgr_flash.py --image_path build/mg100/aws/zephyr/app_update.bin --no_monitor
 ```
+
+The serial port is found automatically (see below). Pass `-cs /dev/ttyUSB0` or
+similar to choose one yourself.
 
 `mcumgr` must be on `PATH` or in `~/go/bin`. The script exits `0` only when the
 new image is running **and** confirmed; any failure exits `1` with the step
@@ -43,3 +45,28 @@ not leave a working gateway decommissioned.
 
 Hardware-free tests: `python scripts/tests/test_mcumgr_flash.py`
 (or `python -m pytest scripts/tests`).
+
+# Finding the gateway's serial port
+
+The MG100 console is reached through Laird's USB-to-serial cable, an FTDI chip
+that reports the product name `LC231X`. `mg100_port.py` finds it:
+
+```
+python scripts/mg100_port.py          # list adapters and what answers on each
+python scripts/mg100_port.py --pick   # print the one port to use, or exit 1
+```
+
+- **One adapter plugged in:** it is used without writing anything to it.
+- **Several adapters:** each free port is asked for its `name` attribute, and
+  the single one that answers as an MG100 is used. A port held by another
+  program, such as a running flash, is reported as busy and is not written to.
+- **Still ambiguous:** the scripts stop and list the ports, so you can pass one.
+
+`mcumgr_flash.py`, `mcumgr_certificate_upload.py` and
+`send_serial_command_to_device.py` default to `auto`. The wizard fills its
+Serial Port field on start, and its "Detect gateway" button re-detects and shows
+the gateway's name. On macOS use the `/dev/cu.usbserial-...` device, which is
+the one detection returns.
+
+Hardware-free tests: `python scripts/tests/test_mg100_port.py`.
+

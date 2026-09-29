@@ -4,8 +4,10 @@ import argparse
 
 import serial
 
+from mg100_port import resolve_port
 
-def execute_command_over_serial(command, device: str = "/dev/ttyUSB0",
+
+def execute_command_over_serial(command, device: str = "auto",
                                 baudrate: int = 115200,
                                 read_timeout: float = 2,
                                 quiet: bool = False) -> str:
@@ -13,8 +15,10 @@ def execute_command_over_serial(command, device: str = "/dev/ttyUSB0",
 
     Reads for up to `read_timeout` seconds (or 4096 bytes). The reply is also
     echoed to stdout unless `quiet` is set. Undecodable bytes (boot noise,
-    a log line cut in half) are replaced instead of raising.
+    a log line cut in half) are replaced instead of raising. `device` "auto"
+    finds the MG100 cable.
     """
+    device = resolve_port(device)
     with serial.Serial(device, baudrate, timeout=read_timeout) as ser:
         ser.reset_input_buffer()
         ser.write((command + '\n').encode())
@@ -27,8 +31,9 @@ def execute_command_over_serial(command, device: str = "/dev/ttyUSB0",
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Execute a shell command on a device over serial.")
-    parser.add_argument("-s", "--serial", default="/dev/ttyUSB0",
-                        help="Serial device, e.g. /dev/ttyUSB0 or /dev/cu.usbserial-XXXX.")
+    parser.add_argument("-s", "--serial", default="auto",
+                        help="Serial device, e.g. /dev/ttyUSB0 or /dev/cu.usbserial-XXXX; "
+                             "\"auto\" (the default) finds the MG100 cable.")
     parser.add_argument("command", help="Command to execute on the device.")
     parser.add_argument("-b", "--baud", type=int, default=115200,
                         help="Baud rate.")
