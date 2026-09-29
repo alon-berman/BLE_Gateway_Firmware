@@ -120,7 +120,7 @@ def run_cmd(cmd: list[str], label: str = "") -> tuple[int, str]:
         output_lines = []
         buf = ""
         while True:
-            chunk = proc.stdout.read(256)
+            chunk = proc.stdout.read1(256)  # returns what is available; read() waits for 256 bytes
             if not chunk:
                 break
             buf += chunk.decode(errors="replace")
@@ -474,7 +474,7 @@ def _run_cmd_in_dir(cmd: list[str], cwd: str, label: str = "") -> tuple[int, str
         output_lines: list[str] = []
         buf = ""
         while True:
-            chunk = proc.stdout.read(256)
+            chunk = proc.stdout.read1(256)  # returns what is available; read() waits for 256 bytes
             if not chunk:
                 break
             buf += chunk.decode(errors="replace")
