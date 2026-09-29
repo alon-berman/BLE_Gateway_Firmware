@@ -26,6 +26,7 @@ os.environ["AWS_PROFILE"] = "etoot"
 
 import serial
 import serial.tools.list_ports
+from mg100_port import PortNotFound, candidate_ports, find_mg100_port, probe
 from nicegui import ui, app
 
 from register_sim import authenticate as emnify_authenticate_via_env
@@ -62,7 +63,7 @@ FIRMWARE_BIN_RELPATH = os.path.join("build", "mg100", "aws", "zephyr", "app_upda
 @dataclass
 class WizardState:
     gateway_id: str = ""
-    serial_port: str = "/dev/ttyUSB0"
+    serial_port: str = ""   # filled in by port detection; "auto" also works
     image_s3_key_1: str = ""
     image_s3_key_2: str = ""
     image_path_1: str = ""
@@ -96,6 +97,36 @@ def emit_log(msg: str):
 
 def get_serial_ports() -> list[str]:
     return [p.device for p in serial.tools.list_ports.comports()] or ["/dev/ttyUSB0"]
+
+
+def detect_mg100_port(probe_ports: bool = False) -> tuple[str, str]:
+    """(port, description) for the MG100 cable, or ("", reason).
+
+    Without probing nothing is written to any port: the choice is made from
+    the USB identity of the adapter (Laird's FTDI "LC231X" cable).
+    """
+    try:
+        port = find_mg100_port(probe_ports=probe_ports)
+    except PortNotFound as exc:
+        return "", str(exc)
+    for c in candidate_ports():
+        if c.device == port:
+            if probe_ports:
+                probe(c)
+            return port, c.describe()
+    return port, port
+
+
+def current_port() -> str:
+    """The port to use now; detects one when the field is empty or "auto"."""
+    if not state.serial_port or state.serial_port.strip().lower() == "auto":
+        port, why = detect_mg100_port()
+        if not port:
+            emit_log(f"✗ Serial port: {why}")
+            return state.serial_port
+        emit_log(f"Serial port {port} (auto-detected)")
+        state.serial_port = port
+    return state.serial_port
 
 
 def find_first_file_by_pattern(pattern: str, dir_path: str) -> Optional[str]:
@@ -445,13 +476,14 @@ def _run_flash_blocking(image_path: str, label: str):
     emit_log(f"── {label} ──")
     emit_log(f"Delegating to {script_path}")
     emit_log(f"  image_path = {image_path}")
-    emit_log(f"  connstring = {state.serial_port}  conntype = {state.conntype}")
+    port = current_port()
+    emit_log(f"  connstring = {port}  conntype = {state.conntype}")
     emit_log(f"  timeout = {int(state.timeout)}s  retries = {int(state.retries)}")
 
     cmd = [
         "python3", "-u", script_path,
         "--image_path", image_path,
-        "--connstring", state.serial_port,
+        "--connstring", port or "auto",
         "--conntype", state.conntype,
         "--timeout", str(int(state.timeout)),
         "--retries", str(int(state.retries)),
@@ -588,7 +620,7 @@ def _create_certs_blocking() -> Optional[str]:
 
 def _run_cert_upload_blocking():
     # fs upload uses raw connstring (no mtu) — matches mcumgr_certificate_upload.py
-    connstring_raw = state.serial_port
+    connstring_raw = current_port()
     # int() casts because ui.number binds floats; mcumgr rejects "1.0" for -r.
     t, r, ct = str(int(state.timeout)), str(int(state.retries)), state.conntype
     connstring_mtu = f"{connstring_raw},mtu=1024"
@@ -652,7 +684,7 @@ _monitor_stop = threading.Event()
 
 def _serial_monitor_thread():
     try:
-        with serial.Serial(state.serial_port, 115200, timeout=1) as ser:
+        with serial.Serial(current_port(), 115200, timeout=1) as ser:
             while not _monitor_stop.is_set():
                 line = ser.readline().decode(errors="replace").strip()
                 if line:
@@ -770,20 +802,25 @@ This wizard will walk you through the **complete bringup process** for a new gat
 """)
         with ui.row().classes("gap-4 mt-4"):
             ui.input("Gateway ID (IMEI)", placeholder="e.g. 354616090640025").classes("w-64").bind_value(state, "gateway_id")
-            port_input = ui.input("Serial Port", value=state.serial_port, placeholder="/dev/ttyUSB0").classes("w-64")
+            if not state.serial_port:
+                state.serial_port, _ = detect_mg100_port()
+            port_input = ui.input("Serial Port", value=state.serial_port,
+                                  placeholder="auto").classes("w-64")
             port_input.bind_value(state, "serial_port")
 
-            detected = get_serial_ports()
-            port_label = ui.label(f"Detected: {', '.join(detected) if detected else 'none'}").classes("text-xs text-grey-6 self-center")
+            _, found = detect_mg100_port()
+            port_label = ui.label(f"MG100 cable: {found}").classes("text-xs text-grey-6 self-center")
 
             def _refresh_ports():
-                ports = get_serial_ports()
-                port_label.text = f"Detected: {', '.join(ports) if ports else 'none'}"
-                if ports and not state.serial_port:
-                    state.serial_port = ports[0]
-                    port_input.value = ports[0]
+                # Re-detect and ask the device for its name. A port held by a
+                # running flash shows as busy and is not written to.
+                port, found = detect_mg100_port(probe_ports=True)
+                port_label.text = f"MG100 cable: {found}"
+                if port:
+                    state.serial_port = port
+                    port_input.value = port
 
-            ui.button("Refresh ports", icon="refresh", on_click=_refresh_ports).props("flat dense")
+            ui.button("Detect gateway", icon="usb", on_click=_refresh_ports).props("flat dense")
 
         _nav_buttons(stepper, next_label="Start →")
 

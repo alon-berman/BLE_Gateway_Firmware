@@ -4,6 +4,7 @@ import re
 import subprocess
 from time import sleep
 
+from mg100_port import resolve_port
 from send_serial_command_to_device import execute_command_over_serial
 
 CERTS_TO_UPLOAD = [
@@ -23,7 +24,8 @@ def find_first_file_by_pattern(pattern, dir_path):
 def main(cert_folder, timeout, retries, conntype, connstring):
     # mcumgr -t 5 -r 2 --conntype serial --connstring dev=/dev/ttyUSB0,mtu=1024 fs upload /path/to/cert_folder/AmazonRootCA1.pem /lfs/root_ca.pe
     
-    print("uploading certificates ....")
+    connstring = resolve_port(connstring)
+    print(f"uploading certificates over {connstring} ....")
     execute_command_over_serial("log halt",device=connstring)
     execute_command_over_serial("attr set commissioned 0", device=connstring)
 
@@ -47,7 +49,8 @@ if __name__ == '__main__':
     parser.add_argument('-ct','--conntype', type=str,
                         help='the connection type', default='serial'),
     parser.add_argument('-cs','--connstring', type=str,
-                        help='the connection type', default='/dev/ttyUSB0'),
+                        help='serial device; "auto" (the default) finds the MG100 cable',
+                        default='auto'),
     parser.add_argument('--cert_folder', type=str,
                         help='path to certificate folders AmazonRootCA1.pem, AmazonRootCA3.pem, public.pem.key, private.pem.key')
 
