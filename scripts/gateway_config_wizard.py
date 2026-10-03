@@ -1163,4 +1163,9 @@ def _build_step_done(stepper):
             ui.button("Restart", icon="replay", on_click=lambda: stepper.set_value("Welcome")).props("color=secondary")
 
 
-ui.run(title="MG100 Gateway Wizard", port=8080, reload=False)
+# Blocking work (EMnify/S3/Secrets Manager calls, serial probes, mcumgr) can
+# stall the event loop for seconds.  NiceGUI's default reconnect_timeout of
+# 3 s makes the browser drop the socket after ~6 s without a heartbeat and
+# then hard-reload the page, losing wizard state.  A long window keeps the
+# client alive and lets the browser reconnect silently instead.
+ui.run(title="MG100 Gateway Wizard", port=8080, reload=False, reconnect_timeout=60.0)
