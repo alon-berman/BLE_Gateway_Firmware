@@ -20,7 +20,6 @@ until the device reports it.
 import argparse
 import os
 import re
-import shutil
 import struct
 import subprocess
 import sys
@@ -28,6 +27,7 @@ import time
 
 import serial
 
+from mcumgr_bin import McumgrNotFound, mcumgr_path
 from mg100_port import PortNotFound, resolve_port
 from send_serial_command_to_device import execute_command_over_serial
 
@@ -133,9 +133,10 @@ class Flasher:
         self.connstring = f"{connstring},mtu={SERIAL_MTU}"
         self.timeout = int(timeout)
         self.retries = int(retries)
-        self.mcumgr = shutil.which("mcumgr") or os.path.expanduser("~/go/bin/mcumgr")
-        if not os.path.isfile(self.mcumgr):
-            raise FlashError("mcumgr not found on PATH or in ~/go/bin")
+        try:
+            self.mcumgr = mcumgr_path()
+        except McumgrNotFound as exc:
+            raise FlashError(str(exc)) from exc
         if conntype == "serial" and not os.path.exists(connstring):
             raise FlashError(f"serial device not found: {connstring}")
         self._last_serial_error = None

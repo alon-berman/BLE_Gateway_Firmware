@@ -70,3 +70,26 @@ the one detection returns.
 
 Hardware-free tests: `python scripts/tests/test_mg100_port.py`.
 
+## Uploading the AWS IoT credentials
+
+```bash
+python scripts/mcumgr_certificate_upload.py --cert_folder ~/Alon/etoot/mg100_certs/<IMEI>
+```
+
+The folder needs the gateway's `deviceId-<IMEI>-certificate.pem.crt` and
+`-private.pem.key`. `AmazonRootCA1.pem` is added from `scripts/certs/` when the
+folder has none, and is checked against the published hash either way. Each
+file is read back from the device after upload and compared byte for byte.
+The script stops at the first failure and leaves the gateway with
+`commissioned=0`, so it keeps waiting instead of connecting with missing
+files; it exits `0` only when all three files verified, after setting the
+endpoint, `commissioned=1` and resetting the gateway. The wizard's
+"Create & Upload" and "Upload Existing" buttons use the same code and report
+failure instead of "uploaded".
+
+`mcumgr` is looked up on `PATH`, then in `~/go/bin`, `/usr/local/bin` and
+`/opt/homebrew/bin` (see `mcumgr_bin.py`), so the wizard works when started
+from a launcher whose `PATH` lacks `~/go/bin`.
+
+Hardware-free tests: `python scripts/tests/test_mcumgr_certificate_upload.py`.
+

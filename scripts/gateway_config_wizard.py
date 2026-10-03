@@ -8,6 +8,7 @@ mcumgr_certificate_upload.py logic and adds EMnify SIM activation.
 import asyncio
 import json
 import os
+import sys
 import re
 import subprocess
 import threading
@@ -29,6 +30,8 @@ import serial.tools.list_ports
 from mg100_port import PortNotFound, candidate_ports, find_mg100_port, probe
 from nicegui import ui, app
 
+from mcumgr_certificate_upload import upload_certificates
+from root_ca import BUNDLED_ROOT_CA, ensure_root_ca
 from register_sim import authenticate as emnify_authenticate_via_env
 from register_sim import get_sim_id_for_iccid, activate_sim as emnify_activate_sim_api
 
@@ -40,16 +43,11 @@ USERS_FASTAPI_SCRIPTS = os.path.join(
     "git", "etoot", "lambda-functions", "users-fastapi", "lambda", "scripts",
 )
 CERT_OUTPUT_BASE = os.path.join(os.path.expanduser("~"), "Alon", "etoot", "mg100_certs")
-AMAZON_ROOT_CA1_REF = os.path.join(CERT_OUTPUT_BASE, "354616090640025", "AmazonRootCA1.pem")
+# Amazon Root CA 1 ships with the repo; see root_ca.py.
+AMAZON_ROOT_CA1_REF = BUNDLED_ROOT_CA
 IOT_POLICY_NAME = "mg100"
 
 EMNIFY_API_BASE = "https://cdn.emnify.net/api/v1"
-
-CERTS_TO_UPLOAD = [
-    ("AmazonRootCA1.pem", "/lfs/root_ca.pem"),
-    (r".*-certificate\.pem\.crt$", "/lfs/client_cert.pem"),
-    (r".*-private\.pem\.key$", "/lfs/client_key.pem"),
-]
 
 AWS_ENDPOINT = "a3t01gae6daupy-ats.iot.us-east-1.amazonaws.com"
 
@@ -481,7 +479,7 @@ def _run_flash_blocking(image_path: str, label: str):
     emit_log(f"  timeout = {int(state.timeout)}s  retries = {int(state.retries)}")
 
     cmd = [
-        "python3", "-u", script_path,
+        sys.executable, "-u", script_path,
         "--image_path", image_path,
         "--connstring", port or "auto",
         "--conntype", state.conntype,
@@ -542,7 +540,6 @@ def _run_cmd_in_dir(cmd: list[str], cwd: str, label: str = "") -> tuple[int, str
 def _create_certs_blocking() -> Optional[str]:
     """Create AWS IoT Thing + certs using the same logic as
     add_mg_100_gateway_thing.py.  Returns the output directory on success."""
-    import shutil
 
     gw = state.gateway_id.strip()
     if not gw:
@@ -604,11 +601,8 @@ def _create_certs_blocking() -> Optional[str]:
         emit_log(f"✓ Saved cert → {cert_path}")
         emit_log(f"✓ Saved key  → {key_path}")
 
-        if os.path.isfile(AMAZON_ROOT_CA1_REF):
-            shutil.copy(AMAZON_ROOT_CA1_REF, output_dir)
-            emit_log(f"✓ Copied AmazonRootCA1.pem → {output_dir}")
-        else:
-            emit_log(f"⚠ AmazonRootCA1.pem not found at {AMAZON_ROOT_CA1_REF} — copy it manually")
+        ensure_root_ca(output_dir)
+        emit_log(f"✓ Copied AmazonRootCA1.pem → {output_dir}")
 
         emit_log(f"✓ Certificates ready in {output_dir}")
         return output_dir
@@ -618,43 +612,38 @@ def _create_certs_blocking() -> Optional[str]:
         return None
 
 
-def _run_cert_upload_blocking():
-    # fs upload uses raw connstring (no mtu) — matches mcumgr_certificate_upload.py
-    connstring_raw = current_port()
-    # int() casts because ui.number binds floats; mcumgr rejects "1.0" for -r.
-    t, r, ct = str(int(state.timeout)), str(int(state.retries)), state.conntype
-    connstring_mtu = f"{connstring_raw},mtu=1024"
+def _run_cert_upload_blocking() -> bool:
+    """Upload and verify the credentials; see mcumgr_certificate_upload.py.
 
+    Returns True only when all three files were read back from the device
+    intact. On failure the gateway is left decommissioned so it keeps waiting.
+    """
+    port = current_port()
+    if not port:
+        emit_log("✗ No serial port; nothing was written to the device")
+        return False
     emit_log("── Certificate Upload ──")
-    serial_command("log halt", device=connstring_raw)
-    serial_command("attr set commissioned 0", device=connstring_raw)
 
-    for file_pattern, dest_path in CERTS_TO_UPLOAD:
-        abs_path = find_first_file_by_pattern(file_pattern, state.cert_folder)
-        if not abs_path:
-            emit_log(f"✗ File matching '{file_pattern}' not found in {state.cert_folder}")
-            continue
-        run_cmd(
-            ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_raw, "fs", "upload", abs_path, dest_path],
-            f"upload {os.path.basename(abs_path)} → {dest_path}",
-        )
-        sleep(3)
+    def run(cmd, label):
+        rc, _ = run_cmd(cmd, label)
+        return rc
 
-    serial_command(f"attr set endpoint {AWS_ENDPOINT}", device=connstring_raw)
-    serial_command("attr set commissioned 1", device=connstring_raw)
-    serial_command("log go", device=connstring_raw)
+    def serial_cmd(command, device):
+        serial_command(command, device=device)
 
-    emit_log("Resetting device to apply new certificates…")
-    run_cmd(
-        ["mcumgr", "-t", t, "-r", r, "--conntype", ct, "--connstring", connstring_mtu, "reset"],
-        "reset after cert upload",
+    done = upload_certificates(
+        state.cert_folder, port,
+        timeout=int(state.timeout), retries=int(state.retries), conntype=state.conntype,
+        log=emit_log, run=run, serial_cmd=serial_cmd,
     )
-    emit_log("Waiting 30 s for device to reboot…")
-    for i in range(30):
-        sleep(1)
-        if i % 10 == 0:
-            emit_log(f"  …{30 - i}s remaining")
-    emit_log("✓ Certificate upload complete — device should now connect")
+    if done:
+        emit_log("Waiting 30 s for device to reboot…")
+        for i in range(30):
+            sleep(1)
+            if i % 10 == 0:
+                emit_log(f"  …{30 - i}s remaining")
+        emit_log("✓ Certificate upload complete — device should now connect")
+    return done
 
 
 def _run_emnify_blocking():
@@ -1065,15 +1054,20 @@ def _build_step_certs(stepper):
                 ui.notify("Gateway ID is required", type="warning")
                 return
 
+            result = {"ok": False}
+
             def _do_all():
                 out = _create_certs_blocking()
                 if out:
                     state.cert_folder = out
-                    _run_cert_upload_blocking()
+                    result["ok"] = _run_cert_upload_blocking()
 
             await _run_in_thread(_do_all)
             cert_input.value = state.cert_folder
-            ui.notify("Certificates created & uploaded", type="positive")
+            if result["ok"]:
+                ui.notify("Certificates created & uploaded", type="positive")
+            else:
+                ui.notify("Certificate upload failed — see the log; the gateway stays decommissioned", type="negative")
 
         async def _upload_existing():
             folder = os.path.expanduser(state.cert_folder.strip())
@@ -1081,8 +1075,16 @@ def _build_step_certs(stepper):
                 ui.notify("Certificate folder not found", type="negative")
                 return
             state.cert_folder = folder
-            await _run_in_thread(_run_cert_upload_blocking)
-            ui.notify("Certificates uploaded", type="positive")
+            result = {"ok": False}
+
+            def _do_upload():
+                result["ok"] = _run_cert_upload_blocking()
+
+            await _run_in_thread(_do_upload)
+            if result["ok"]:
+                ui.notify("Certificates uploaded", type="positive")
+            else:
+                ui.notify("Certificate upload failed — see the log; the gateway stays decommissioned", type="negative")
 
         with ui.stepper_navigation():
             ui.button("Back", on_click=stepper.previous).props("flat")
@@ -1113,7 +1115,7 @@ Enter the BLE MAC addresses of the sensors assigned to this gateway,
                 ui.notify("Enter at least one sensor MAC", type="warning")
                 return
             device_arg = f"deviceId-{state.gateway_id}"
-            cmd = ["python3", "update_sensors_list.py", device_arg] + macs
+            cmd = [sys.executable, "update_sensors_list.py", device_arg] + macs
             emit_log(f"Would run: {' '.join(cmd)}")
             emit_log("(Run this in the users-fastapi repo directory)")
             ui.notify("Sensor command logged — run it in users-fastapi repo", type="info")
