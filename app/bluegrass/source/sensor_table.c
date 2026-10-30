@@ -114,6 +114,8 @@ typedef struct SensorEntry {
 	bool subscribed;
 	bool getAcceptedSubscribed;
 	bool shadowInitReceived;
+	uint8_t shadowInitAttempts;
+	uint64_t shadowInitRetryTime;
 	uint64_t subscriptionDispatchTime;
 	uint32_t ttl;
 	void *pCmd;
@@ -449,6 +451,7 @@ void SensorTable_DecomissionHandler(void)
 	for (i = 0; i < CONFIG_SENSOR_TABLE_SIZE; i++) {
 		Greenlist(&sensorTable[i], false);
 		sensorTable[i].shadowInitReceived = false;
+		sensorTable[i].shadowInitAttempts = 0;
 		sensorTable[i].firstDumpComplete = false;
 	}
 }
@@ -459,6 +462,9 @@ void SensorTable_UnsubscribeAll(void)
 	for (i = 0; i < CONFIG_SENSOR_TABLE_SIZE; i++) {
 		sensorTable[i].subscribed = false;
 		sensorTable[i].getAcceptedSubscribed = false;
+		/* A new connection gets a fresh set of attempts. */
+		sensorTable[i].shadowInitAttempts = 0;
+		sensorTable[i].shadowInitRetryTime = 0;
 	}
 }
 
@@ -541,15 +547,35 @@ void SensorTable_GetAcceptedSubscriptionHandler(void)
 
 void SensorTable_InitShadowHandler(void)
 {
+	int64_t now = k_uptime_get();
 	size_t i;
 	for (i = 0; i < CONFIG_SENSOR_TABLE_SIZE; i++) {
 		SensorEntry_t *pEntry = &sensorTable[i];
-		if (pEntry->getAcceptedSubscribed &&
-		    !pEntry->shadowInitReceived) {
-			PublishToGetAccepted(pEntry);
-			/* Limit to one because it is memory intensive. */
-			return;
+		if (!pEntry->getAcceptedSubscribed ||
+		    pEntry->shadowInitReceived) {
+			continue;
 		}
+		if (pEntry->shadowInitAttempts >=
+		    CONFIG_SENSOR_SHADOW_INIT_MAX_ATTEMPTS) {
+			/* The reply only restores the event log. Relay without
+			 * it rather than leave the sensor (and every sensor
+			 * behind it) silent.
+			 */
+			LOG_WRN("No shadow for '%s' after %u requests, relaying without it",
+				log_strdup(pEntry->addrString),
+				pEntry->shadowInitAttempts);
+			pEntry->shadowInitReceived = true;
+			continue;
+		}
+		if (now >= pEntry->shadowInitRetryTime) {
+			PublishToGetAccepted(pEntry);
+			pEntry->shadowInitAttempts += 1;
+			pEntry->shadowInitRetryTime =
+				now + (CONFIG_SENSOR_SHADOW_INIT_RETRY_SECONDS *
+				       MSEC_PER_SEC);
+		}
+		/* Limit to one because it is memory intensive. */
+		return;
 	}
 }
 
@@ -1297,6 +1323,8 @@ static void Greenlist(SensorEntry_t *pEntry, bool Enable)
 			pEntry->greenlisted = true;
 			pEntry->subscribed = false;
 			pEntry->getAcceptedSubscribed = false;
+			pEntry->shadowInitAttempts = 0;
+			pEntry->shadowInitRetryTime = 0;
 			pEntry->subscriptionDispatchTime =
 				k_uptime_get() +
 				(CONFIG_SENSOR_SUBSCRIPTION_DELAY_SECONDS *

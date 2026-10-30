@@ -168,6 +168,27 @@ config SENSOR_SUBSCRIPTION_DELAY_SECONDS
         The server needs time to generate the sensor object.
         When the permissions are changed on AWS a disconnect will occur.
 
+config SENSOR_SHADOW_INIT_RETRY_SECONDS
+    int "Wait between shadow/get requests for one sensor"
+    default 15
+    range 3 300
+    help
+        After (re)connecting, the gateway asks for each sensor's shadow and
+        does not relay that sensor until the reply arrives. Upstream repeated
+        the request every sensor tick (3 s) with no backoff; on a weak link the
+        ~4 KB QoS-1 replies piled up, the broker stopped delivering anything
+        (Publish-Out CLIENT_ERROR) and the whole site went silent.
+
+config SENSOR_SHADOW_INIT_MAX_ATTEMPTS
+    int "shadow/get requests per sensor before relaying without the reply"
+    default 3
+    range 1 20
+    help
+        The reply only restores the sensor's event log (duplicate filtering
+        across reboots). Losing that costs at most a few repeated events;
+        never relaying costs every reading, so stop waiting after this many
+        requests and start relaying.
+
 config SENSOR_CONFIG_DELAY_SECONDS
     int "Delay before sensor is configured/dumped after greenlist ack"
     default 30
